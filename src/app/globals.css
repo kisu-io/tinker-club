@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html,
+body {
+  background: #ffffff;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Hide scrollbars on horizontal tab strips for a cleaner mobile feel */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl bg-white shadow-card border border-ink-100;
+  }
+  .stat-card {
+    @apply rounded-2xl bg-ink-50 p-5;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors;
+  }
+  .btn-primary {
+    @apply btn bg-ink-900 text-white hover:bg-ink-800;
+  }
+  .btn-ghost {
+    @apply btn border border-ink-200 bg-white text-ink-900 hover:bg-ink-50;
+  }
+  .input {
+    @apply w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-400 focus:ring-2 focus:ring-ink-100;
+  }
+  .label {
+    @apply block text-sm font-medium text-ink-800 mb-1;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+}
