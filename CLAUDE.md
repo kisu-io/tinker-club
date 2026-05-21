@@ -59,6 +59,12 @@ These rules are enforced in the repo layer / actions, not the UI:
 - The `OWNER` membership cannot be removed via `Memberships.remove` (SQL filters `role != 'OWNER'`).
 - One `HandoverLog` per `Booking` (UNIQUE constraint); `Handovers.upsert` preserves existing field values when partial updates are passed.
 
+### Design system
+
+Before changing any UI surface, read `design-system/tinker-club/MASTER.md` — it's the source of truth for typography (Playfair Display + Inter), color (premium dark + `#DC2626` action red), spacing, shadows, and component specs. Page-specific overrides live in `design-system/tinker-club/pages/<page>.md` and take precedence when present.
+
+The current implementation does **not** yet match the design system — Inter-only, no display serif, dead `accent: #7c5cff` token in `tailwind.config.ts`, uniform `.card` pattern everywhere. Treat MASTER as the target, current Tailwind config as legacy.
+
 ### Conventions
 
 - Path alias: `@/*` → `src/*`.
