@@ -3,6 +3,11 @@ import { Vehicles } from "@/lib/repo";
 import { AddCarButton } from "./AddCarButton";
 import { CollectionGrid, VehicleCardData } from "./CollectionGrid";
 
+function firstName(full: string): string {
+  const parts = full.trim().split(/\s+/);
+  return parts[parts.length - 1] ?? full;
+}
+
 export default async function CollectionPage() {
   const user = await requireUser();
   const vehicles = Vehicles.ownedBy(user.id);
@@ -17,12 +22,20 @@ export default async function CollectionPage() {
     sharedCount: Vehicles.shareCount(v.id),
   }));
 
+  const count = data.length;
+  const eyebrow =
+    count === 0
+      ? "Your collection"
+      : `Your collection · ${count} ${count === 1 ? "car" : "cars"}`;
+
   return (
     <div>
-      <div className="mb-6 flex items-start justify-between">
+      <div className="mb-8 flex flex-col gap-6 md:mb-12 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Hi {user.name}</h1>
-          <p className="text-sm text-ink-500">Here is your collection</p>
+          <p className="eyebrow">{eyebrow}</p>
+          <h1 className="h-display mt-3 text-[clamp(2.25rem,4vw,3.75rem)]">
+            Hello, <span className="italic">{firstName(user.name)}</span>.
+          </h1>
         </div>
         <AddCarButton />
       </div>

@@ -2,13 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-}
-
 html,
 body {
-  background: #ffffff;
+  /* Off-white per design-system/MASTER.md — gives surfaces somewhere to lift from. */
+  background: #f8fafc;
   color: #0f172a;
   -webkit-font-smoothing: antialiased;
 }
@@ -32,8 +29,14 @@ body {
   .btn {
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors;
   }
+  /* Primary CTA — solid ink for app-internal actions (Save, Sign In, etc.). */
   .btn-primary {
     @apply btn bg-ink-900 text-white hover:bg-ink-800;
+  }
+  /* Editorial CTA — red, used for the rare "do the headline action" surfaces
+     (Add Car, Sign In hero CTA). Never more than one per viewport. */
+  .btn-accent {
+    @apply btn rounded-full bg-accent text-white hover:bg-accent-700 shadow-sm;
   }
   .btn-ghost {
     @apply btn border border-ink-200 bg-white text-ink-900 hover:bg-ink-50;
@@ -46,5 +49,23 @@ body {
   }
   .pill {
     @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+  /* Eyebrow label — small caps, tracked-out. Borrowed from editorial layouts. */
+  .eyebrow {
+    @apply text-[11px] font-medium uppercase tracking-eyebrow text-ink-500;
+  }
+  /* Display headline — serif, generous scale. Use sparingly. */
+  .h-display {
+    @apply font-display font-semibold leading-[1.05] tracking-tight text-ink-900;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

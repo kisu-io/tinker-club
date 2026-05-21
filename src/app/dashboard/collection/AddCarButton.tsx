@@ -10,7 +10,7 @@ export function AddCarButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button onClick={() => setOpen(true)} className="btn-primary">
+      <button onClick={() => setOpen(true)} className="btn-accent">
         Add Car <PlusIcon />
       </button>
 
