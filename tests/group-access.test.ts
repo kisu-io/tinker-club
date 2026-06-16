@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkGroupAccess } from "../src/lib/group";
+import { checkGroupAccess } from "../src/lib/group-access";
 import type { Club, ClubMembership } from "../src/lib/types";
 
 const club = { id: "c1", ownerId: "owner" } as Club;

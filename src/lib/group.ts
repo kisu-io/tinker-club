@@ -1,22 +1,12 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "./auth";
 import { Clubs, Memberships } from "./repo";
+import { checkGroupAccess } from "./group-access";
 import type { Club, ClubMembership, User } from "./types";
 
-export type GroupAccess =
-  | { ok: true; isOwner: boolean }
-  | { ok: false; reason: "not-found" | "not-member" };
-
-/** Pure authorization decision — unit tested. */
-export function checkGroupAccess(
-  club: Club | undefined,
-  membership: ClubMembership | undefined,
-  userId: string,
-): GroupAccess {
-  if (!club) return { ok: false, reason: "not-found" };
-  if (!membership) return { ok: false, reason: "not-member" };
-  return { ok: true, isOwner: club.ownerId === userId };
-}
+// Re-export the pure helpers so callers can import everything from "./group".
+export { checkGroupAccess } from "./group-access";
+export type { GroupAccess } from "./group-access";
 
 export interface GroupContext {
   user: User;
