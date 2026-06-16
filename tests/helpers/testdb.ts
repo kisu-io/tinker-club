@@ -5,7 +5,8 @@ import path from "node:path";
 // Must run before src/lib/db.ts opens its lazy singleton (first query).
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mc-test-"));
 process.env.DATA_DIR = dir;
-process.env.NODE_ENV = "test";
+// NODE_ENV is typed readonly by Next's globals; cast to set it for tests.
+(process.env as { NODE_ENV?: string }).NODE_ENV = "test";
 
 export const TEST_DATA_DIR = dir;
 

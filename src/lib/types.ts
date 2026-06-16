@@ -90,6 +90,11 @@ export interface Club {
   description: string | null;
   ownerId: string;
   inviteCode: string;
+  slug: string;
+  primaryColor: string | null;   // hex, e.g. "#dc2626" — group accent CTA color
+  accentColor: string | null;    // hex — optional secondary accent
+  logoUrl: string | null;        // group logo (https URL)
+  tagline: string | null;
   createdAt: string;
 }
 

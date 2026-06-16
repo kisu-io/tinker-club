@@ -12,7 +12,7 @@ export async function createClub(fd: FormData) {
   const user = await requireUser();
   const name = String(fd.get("name") || "").trim();
   if (!name) return;
-  const club = Clubs.create(user.id, name, String(fd.get("description") || "") || undefined);
+  const club = Clubs.create(user.id, name, { description: String(fd.get("description") || "") || undefined });
   revalidatePath("/dashboard/sharing");
   redirect(`/dashboard/sharing/${club.id}`);
 }

@@ -1,4 +1,5 @@
 import { all, get, run, id } from "./db";
+import { slugify, uniqueSlug } from "./slug";
 import type {
   User, Vehicle, Expense, DocumentRow, TimelineEvent, GalleryImage,
   Club, ClubMembership, VehicleShare, Booking, HandoverLog, Visibility,
@@ -131,16 +132,35 @@ function code() {
 }
 export const Clubs = {
   byId: (cid: string) => get<Club>("SELECT * FROM Club WHERE id=?", cid),
+  bySlug: (slug: string) => get<Club>("SELECT * FROM Club WHERE slug=?", slug),
   byInvite: (c: string) => get<Club>("SELECT * FROM Club WHERE inviteCode=?", c),
+  slugExists: (slug: string) => !!get<{ x: number }>("SELECT 1 x FROM Club WHERE slug=?", slug),
   forUser: (uid: string) =>
     all<Club & { memberCount: number; role: string }>(
       `SELECT c.*, m.role AS role,
         (SELECT COUNT(*) FROM ClubMembership mm WHERE mm.clubId = c.id) AS memberCount
        FROM Club c JOIN ClubMembership m ON m.clubId = c.id
        WHERE m.userId = ? ORDER BY c.createdAt DESC`, uid),
-  create(ownerId: string, name: string, description?: string) {
+  create(
+    ownerId: string,
+    name: string,
+    opts: {
+      description?: string;
+      slug?: string;
+      primaryColor?: string;
+      accentColor?: string;
+      logoUrl?: string;
+      tagline?: string;
+    } = {},
+  ) {
     const cid = id();
-    run("INSERT INTO Club (id, name, description, ownerId, inviteCode) VALUES (?,?,?,?,?)", cid, name, description ?? null, ownerId, code());
+    const slug = opts.slug ? slugify(opts.slug) : uniqueSlug(name, Clubs.slugExists);
+    run(
+      `INSERT INTO Club (id, name, description, ownerId, inviteCode, slug, primaryColor, accentColor, logoUrl, tagline)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      cid, name, opts.description ?? null, ownerId, code(), slug,
+      opts.primaryColor ?? null, opts.accentColor ?? null, opts.logoUrl ?? null, opts.tagline ?? null,
+    );
     Memberships.add(cid, ownerId, "OWNER");
     return Clubs.byId(cid)!;
   },
