@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed": "node scripts/seed.mjs"
+    "seed": "node scripts/seed.mjs",
+    "test": "node --loader ./tests/loader.mjs --test 'tests/**/*.test.ts'"
   },
   "dependencies": {
     "bcryptjs": "2.4.3",
