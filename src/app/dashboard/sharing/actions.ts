@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
+import { uniqueSlug } from "@/lib/slug";
 import {
   Clubs, Memberships, Shares, Vehicles, Bookings, Handovers,
 } from "@/lib/repo";
@@ -11,20 +12,33 @@ import {
 export async function createClub(fd: FormData) {
   const user = await requireUser();
   const name = String(fd.get("name") || "").trim();
-  if (!name) return;
-  const club = Clubs.create(user.id, name, { description: String(fd.get("description") || "") || undefined });
+  if (!name) return { error: "Name is required." };
+
+  const desiredSlug = String(fd.get("slug") || "").trim();
+  // Normalize + ensure uniqueness server-side regardless of client preview.
+  const slug = desiredSlug
+    ? uniqueSlug(desiredSlug, Clubs.slugExists)
+    : uniqueSlug(name, Clubs.slugExists);
+
+  const club = Clubs.create(user.id, name, {
+    description: String(fd.get("description") || "") || undefined,
+    slug,
+    primaryColor: String(fd.get("primaryColor") || "") || undefined,
+    logoUrl: String(fd.get("logoUrl") || "") || undefined,
+    tagline: String(fd.get("tagline") || "") || undefined,
+  });
   revalidatePath("/dashboard/sharing");
-  redirect(`/dashboard/sharing/${club.id}`);
+  redirect(`/g/${club.slug}`);
 }
 
 export async function joinClub(fd: FormData) {
   const user = await requireUser();
   const code = String(fd.get("code") || "").trim().toUpperCase();
   const club = Clubs.byInvite(code);
-  if (!club) return { error: "No club found for that invite code." };
+  if (!club) return { error: "No group found for that invite code." };
   Memberships.add(club.id, user.id, "MEMBER");
   revalidatePath("/dashboard/sharing");
-  redirect(`/dashboard/sharing/${club.id}`);
+  redirect(`/g/${club.slug}`);
 }
 
 export async function leaveClub(clubId: string) {
