@@ -45,8 +45,24 @@ Test a restore at least once.
 `GET /healthz` → `{"ok":true}`. Point the platform's health check here.
 
 ## Seeding
-`npm run seed` / `node scripts/seed.mjs` **wipes** the DB. Never run against live data.
-For a fresh prod DB, do nothing — the schema auto-migrates on first query.
+For a fresh prod DB, **do nothing** — the schema auto-migrates on first query and real
+users register themselves. That is the intended production path.
+
+`npm run seed` / `node scripts/seed.mjs` **wipes** the DB — never run it against live data.
+It also **cannot run inside the slim runtime container**: `output: standalone` only ships
+the dependencies webpack traced for the app, and `seed.mjs` is a plain Node script that
+imports `bcryptjs` from `node_modules` (absent in the standalone image). To load demo data,
+run seed where the full dependency tree exists — e.g. on a build host against the mounted
+volume: `DATA_DIR=/path/to/volume npm ci && DATA_DIR=/path/to/volume npm run seed`.
+(App login/registration is unaffected — bcrypt is bundled into the server chunks at build.)
+
+## Verified (containerless smoke test, 2026-06-16)
+The standalone artifact (`node .next/standalone/server.js`, the same entrypoint the image
+uses) was run with `NODE_ENV=production` + a real `SESSION_SECRET` + `DATA_DIR`:
+`/healthz` → `{"ok":true}`; `/login` → 200; `/` and `/g/<slug>` → 307 to `/login` when
+unauthenticated (no leak); all prod security headers present (CSP, HSTS, X-Frame-Options,
+etc.); booting without `SESSION_SECRET` → the session route 500s (prod guard fires).
+The literal `docker build` still needs running once on a Docker-capable host.
 
 ## Local container smoke test
 ```bash
