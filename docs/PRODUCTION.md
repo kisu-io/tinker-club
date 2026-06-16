@@ -1,5 +1,15 @@
 # Production Deploy & Operations
 
+## Dependency security
+- `next` is pinned to **14.2.35** — the latest patched release in the 14.2 line
+  (fixes the Dec 2025 advisory; 14.2.18 was deprecated). `postcss` devDep bumped to 8.5.x.
+- `npm audit` still reports `next` (high) + a `postcss` bundled inside `next` (moderate),
+  because npm's advisory ranges only credit the 15.x/16.x fixes, not the 14.2.x backports.
+  These are **not** cleared by staying on 14.2.x. Do NOT run `npm audit fix --force` — it
+  pulls `next@16` (React 19 + breaking App Router changes), a separate major-upgrade project.
+- Action item: schedule a deliberate **Next 16 major upgrade** later; until then 14.2.35 is the
+  patched, supported choice.
+
 ## Target
 One container, one SQLite database on a persistent volume. Serves all groups
 (≤20 groups × ≤20 users). Path-based group URLs (`/g/<slug>`) — no wildcard DNS needed.
