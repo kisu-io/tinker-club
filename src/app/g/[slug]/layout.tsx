@@ -18,6 +18,10 @@ export default async function GroupLayout({
   children: React.ReactNode;
   params: { slug: string };
 }) {
+  // SECURITY: this layout authorizes the group, but a Next.js layout does NOT
+  // guarantee a child page is gated. Every page added under g/[slug]/ MUST call
+  // requireGroupMember(params.slug) itself and scope queries to the returned
+  // club.id — never trust params.slug / a raw id without re-checking membership.
   const { club } = await requireGroupMember(params.slug);
 
   return (

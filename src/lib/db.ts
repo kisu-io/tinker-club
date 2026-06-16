@@ -212,13 +212,22 @@ function backfillClubSlugs(db: DatabaseSync) {
   );
 
   const update = db.prepare("UPDATE Club SET slug = ? WHERE id = ?");
-  for (const r of rows) {
-    const base = slugify(r.name);
-    let candidate = base;
-    let i = 2;
-    while (taken.has(candidate)) candidate = `${base}-${i++}`;
-    taken.add(candidate);
-    update.run(candidate, r.id);
+  // Atomic: a crash mid-backfill must not leave some clubs with NULL slugs
+  // (which would make them unreachable via Clubs.bySlug / /g/[slug]).
+  db.exec("BEGIN");
+  try {
+    for (const r of rows) {
+      const base = slugify(r.name);
+      let candidate = base;
+      let i = 2;
+      while (taken.has(candidate)) candidate = `${base}-${i++}`;
+      taken.add(candidate);
+      update.run(candidate, r.id);
+    }
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
   }
 }
 
