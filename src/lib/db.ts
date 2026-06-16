@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { slugify } from "./slug";
 
 // Singleton across hot reloads in dev.
 const g = globalThis as unknown as { __mcDb?: DatabaseSync };
@@ -113,6 +114,11 @@ function migrate(db: DatabaseSync) {
     description TEXT,
     ownerId TEXT NOT NULL REFERENCES User(id) ON DELETE CASCADE,
     inviteCode TEXT UNIQUE NOT NULL,
+    slug TEXT,
+    primaryColor TEXT,
+    accentColor TEXT,
+    logoUrl TEXT,
+    tagline TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -181,6 +187,48 @@ function migrate(db: DatabaseSync) {
     category: "TEXT NOT NULL DEFAULT 'HISTORY'",
     eventDate: "TEXT",
   });
+  ensureColumns(db, "Club", {
+    slug: "TEXT",
+    primaryColor: "TEXT",
+    accentColor: "TEXT",
+    logoUrl: "TEXT",
+    tagline: "TEXT",
+  });
+  backfillClubSlugs(db);
+  // Unique index (not a column constraint) so backfill can run first and so
+  // SQLite tolerates pre-existing NULLs during the upgrade window.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_club_slug ON Club(slug);");
+}
+
+function backfillClubSlugs(db: DatabaseSync) {
+  const rows = db
+    .prepare("SELECT id, name FROM Club WHERE slug IS NULL OR slug = ''")
+    .all() as { id: string; name: string }[];
+  if (!rows.length) return;
+
+  const taken = new Set(
+    (db.prepare("SELECT slug FROM Club WHERE slug IS NOT NULL AND slug <> ''").all() as { slug: string }[])
+      .map((r) => r.slug),
+  );
+
+  const update = db.prepare("UPDATE Club SET slug = ? WHERE id = ?");
+  // Atomic: a crash mid-backfill must not leave some clubs with NULL slugs
+  // (which would make them unreachable via Clubs.bySlug / /g/[slug]).
+  db.exec("BEGIN");
+  try {
+    for (const r of rows) {
+      const base = slugify(r.name);
+      let candidate = base;
+      let i = 2;
+      while (taken.has(candidate)) candidate = `${base}-${i++}`;
+      taken.add(candidate);
+      update.run(candidate, r.id);
+    }
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
 }
 
 function ensureColumns(db: DatabaseSync, table: string, columns: Record<string, string>) {

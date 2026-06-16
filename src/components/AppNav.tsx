@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Logo } from "./Logo";
+import { GroupSwitcher } from "./GroupSwitcher";
 import { CarIcon, WalletIcon, ShareIcon, UserIcon } from "./icons";
 
 const items = [
@@ -17,7 +18,7 @@ function isActive(pathname: string, href: string) {
   return pathname.startsWith(href);
 }
 
-export function TopNav({ initials }: { initials: string }) {
+export function TopNav({ initials, groups }: { initials: string; groups: { slug: string; name: string }[] }) {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-30 hidden border-b border-ink-100 bg-white/90 backdrop-blur md:block">
@@ -39,6 +40,7 @@ export function TopNav({ initials }: { initials: string }) {
               {it.label}
             </Link>
           ))}
+          <GroupSwitcher groups={groups} />
           <Link
             href="/dashboard/profile"
             className="flex h-9 w-9 items-center justify-center rounded-full bg-ink-100 text-xs font-semibold text-ink-700"

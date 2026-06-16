@@ -54,7 +54,7 @@ export default async function SharingPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {clubs.map((c) => (
-              <Link key={c.id} href={`/dashboard/sharing/${c.id}`} className="card group p-5 transition hover:shadow-lg">
+              <Link key={c.id} href={`/g/${c.slug}`} className="card group p-5 transition hover:shadow-lg">
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="font-semibold text-ink-900">{c.name}</p>

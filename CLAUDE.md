@@ -13,7 +13,7 @@ npm run start
 npm run lint     # next lint
 ```
 
-There is no test runner configured.
+Run tests with `npm test` (Node's built-in `node --test`; no extra framework). Requires Node 22.5+ for `node:sqlite`; the suite uses native TypeScript type-stripping plus a small ESM loader (`tests/loader.mjs`) for extensionless imports.
 
 If Node reports `node:sqlite` as unavailable, run with `NODE_OPTIONS=--experimental-sqlite`. Node 22.5+ is required (declared in `engines`).
 

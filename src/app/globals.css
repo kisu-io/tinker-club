@@ -33,10 +33,16 @@ body {
   .btn-primary {
     @apply btn bg-ink-900 text-white hover:bg-ink-800;
   }
-  /* Editorial CTA — red, used for the rare "do the headline action" surfaces
-     (Add Car, Sign In hero CTA). Never more than one per viewport. */
+  /* Editorial CTA — group-themeable. Defaults to the design-system action red;
+     the /g/[slug] layout overrides --group-accent / --group-accent-strong.
+     Used for the rare "do the headline action" surfaces (Add Car, Sign In hero
+     CTA). Never more than one per viewport. */
   .btn-accent {
-    @apply btn rounded-full bg-accent text-white hover:bg-accent-700 shadow-sm;
+    @apply btn rounded-full text-white shadow-sm;
+    background-color: var(--group-accent, #dc2626);
+  }
+  .btn-accent:hover {
+    background-color: var(--group-accent-strong, #b91c1c);
   }
   .btn-ghost {
     @apply btn border border-ink-200 bg-white text-ink-900 hover:bg-ink-50;

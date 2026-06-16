@@ -7,24 +7,50 @@ import {
   Clubs, Memberships, Shares, Vehicles, Bookings, Handovers,
 } from "@/lib/repo";
 
+// Branding inputs are user-supplied; validate before storing so they can't be
+// abused (CSS-property injection via color, tracking/non-https logo URLs).
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+function httpsUrlOrNull(raw: string): string | null {
+  if (!raw) return null;
+  try {
+    return new URL(raw).protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ---------------- Clubs ---------------- */
 export async function createClub(fd: FormData) {
   const user = await requireUser();
   const name = String(fd.get("name") || "").trim();
-  if (!name) return;
-  const club = Clubs.create(user.id, name, String(fd.get("description") || "") || undefined);
+  if (!name) return { error: "Name is required." };
+
+  const rawPrimary = String(fd.get("primaryColor") || "").trim();
+  const rawAccent = String(fd.get("accentColor") || "").trim();
+  const rawLogo = String(fd.get("logoUrl") || "").trim();
+  if (rawLogo && !httpsUrlOrNull(rawLogo)) return { error: "Logo URL must be an https:// link." };
+
+  // Clubs.create enforces slug uniqueness; just pass the raw desired slug (or undefined).
+  const club = Clubs.create(user.id, name, {
+    description: String(fd.get("description") || "") || undefined,
+    slug: String(fd.get("slug") || "").trim() || undefined,
+    primaryColor: HEX_COLOR.test(rawPrimary) ? rawPrimary : undefined,
+    accentColor: HEX_COLOR.test(rawAccent) ? rawAccent : undefined,
+    logoUrl: httpsUrlOrNull(rawLogo) ?? undefined,
+    tagline: String(fd.get("tagline") || "") || undefined,
+  });
   revalidatePath("/dashboard/sharing");
-  redirect(`/dashboard/sharing/${club.id}`);
+  redirect(`/g/${club.slug}`);
 }
 
 export async function joinClub(fd: FormData) {
   const user = await requireUser();
   const code = String(fd.get("code") || "").trim().toUpperCase();
   const club = Clubs.byInvite(code);
-  if (!club) return { error: "No club found for that invite code." };
+  if (!club) return { error: "No group found for that invite code." };
   Memberships.add(club.id, user.id, "MEMBER");
   revalidatePath("/dashboard/sharing");
-  redirect(`/dashboard/sharing/${club.id}`);
+  redirect(`/g/${club.slug}`);
 }
 
 export async function leaveClub(clubId: string) {
