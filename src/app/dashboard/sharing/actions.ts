@@ -3,10 +3,21 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
-import { uniqueSlug } from "@/lib/slug";
 import {
   Clubs, Memberships, Shares, Vehicles, Bookings, Handovers,
 } from "@/lib/repo";
+
+// Branding inputs are user-supplied; validate before storing so they can't be
+// abused (CSS-property injection via color, tracking/non-https logo URLs).
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+function httpsUrlOrNull(raw: string): string | null {
+  if (!raw) return null;
+  try {
+    return new URL(raw).protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 /* ---------------- Clubs ---------------- */
 export async function createClub(fd: FormData) {
@@ -14,17 +25,18 @@ export async function createClub(fd: FormData) {
   const name = String(fd.get("name") || "").trim();
   if (!name) return { error: "Name is required." };
 
-  const desiredSlug = String(fd.get("slug") || "").trim();
-  // Normalize + ensure uniqueness server-side regardless of client preview.
-  const slug = desiredSlug
-    ? uniqueSlug(desiredSlug, Clubs.slugExists)
-    : uniqueSlug(name, Clubs.slugExists);
+  const rawPrimary = String(fd.get("primaryColor") || "").trim();
+  const rawAccent = String(fd.get("accentColor") || "").trim();
+  const rawLogo = String(fd.get("logoUrl") || "").trim();
+  if (rawLogo && !httpsUrlOrNull(rawLogo)) return { error: "Logo URL must be an https:// link." };
 
+  // Clubs.create enforces slug uniqueness; just pass the raw desired slug (or undefined).
   const club = Clubs.create(user.id, name, {
     description: String(fd.get("description") || "") || undefined,
-    slug,
-    primaryColor: String(fd.get("primaryColor") || "") || undefined,
-    logoUrl: String(fd.get("logoUrl") || "") || undefined,
+    slug: String(fd.get("slug") || "").trim() || undefined,
+    primaryColor: HEX_COLOR.test(rawPrimary) ? rawPrimary : undefined,
+    accentColor: HEX_COLOR.test(rawAccent) ? rawAccent : undefined,
+    logoUrl: httpsUrlOrNull(rawLogo) ?? undefined,
     tagline: String(fd.get("tagline") || "") || undefined,
   });
   revalidatePath("/dashboard/sharing");

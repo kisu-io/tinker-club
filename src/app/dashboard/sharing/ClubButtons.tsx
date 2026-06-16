@@ -48,13 +48,17 @@ export function CreateClubButton() {
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="label" htmlFor="cg-color">Accent color</label>
+              <label className="label" htmlFor="cg-color">Primary color</label>
               <input id="cg-color" name="primaryColor" type="color" defaultValue="#dc2626" className="h-10 w-full rounded-xl border border-ink-200" />
             </div>
-            <div className="flex-[2]">
-              <label className="label" htmlFor="cg-logo">Logo URL (optional)</label>
-              <input id="cg-logo" name="logoUrl" className="input" placeholder="https://…/logo.png" />
+            <div className="flex-1">
+              <label className="label" htmlFor="cg-accent">Accent (hover)</label>
+              <input id="cg-accent" name="accentColor" type="color" defaultValue="#b91c1c" className="h-10 w-full rounded-xl border border-ink-200" />
             </div>
+          </div>
+          <div>
+            <label className="label" htmlFor="cg-logo">Logo URL (optional)</label>
+            <input id="cg-logo" name="logoUrl" className="input" placeholder="https://…/logo.png" />
           </div>
           <p className="text-xs text-ink-400">
             You&apos;ll get an invite code to share. Members can browse and book cars you&apos;ve shared into the group.

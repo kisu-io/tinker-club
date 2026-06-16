@@ -1,5 +1,5 @@
 import { all, get, run, id } from "./db";
-import { slugify, uniqueSlug } from "./slug";
+import { uniqueSlug } from "./slug";
 import type {
   User, Vehicle, Expense, DocumentRow, TimelineEvent, GalleryImage,
   Club, ClubMembership, VehicleShare, Booking, HandoverLog, Visibility,
@@ -154,7 +154,9 @@ export const Clubs = {
     } = {},
   ) {
     const cid = id();
-    const slug = opts.slug ? slugify(opts.slug) : uniqueSlug(name, Clubs.slugExists);
+    // Uniqueness is enforced here in one place: slugify happens inside uniqueSlug,
+    // and it probes slugExists so a caller-supplied slug still can't collide.
+    const slug = uniqueSlug(opts.slug ?? name, Clubs.slugExists);
     run(
       `INSERT INTO Club (id, name, description, ownerId, inviteCode, slug, primaryColor, accentColor, logoUrl, tagline)
        VALUES (?,?,?,?,?,?,?,?,?,?)`,

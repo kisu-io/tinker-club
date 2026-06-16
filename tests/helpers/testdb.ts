@@ -13,3 +13,6 @@ export const TEST_DATA_DIR = dir;
 export function cleanup(): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
+
+// Remove the temp DB dir when the test process exits so /tmp doesn't accumulate.
+process.on("exit", cleanup);
