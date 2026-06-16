@@ -79,8 +79,14 @@ CREATE TABLE IF NOT EXISTS Club (
   description TEXT,
   ownerId TEXT NOT NULL REFERENCES User(id) ON DELETE CASCADE,
   inviteCode TEXT UNIQUE NOT NULL,
+  slug TEXT,
+  primaryColor TEXT,
+  accentColor TEXT,
+  logoUrl TEXT,
+  tagline TEXT,
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_club_slug ON Club(slug);
 CREATE TABLE IF NOT EXISTS ClubMembership (
   id TEXT PRIMARY KEY,
   clubId TEXT NOT NULL REFERENCES Club(id) ON DELETE CASCADE,

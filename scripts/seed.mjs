@@ -126,7 +126,11 @@ timeline(mustang, 1968, "The beginning", "This is the year the car was created."
 // Club owned by demo, with friend + friend2 as members
 const club = uid();
 const invite = "GARAGE";
-run("INSERT INTO Club (id,name,description,ownerId,inviteCode) VALUES (?,?,?,?,?)", club, "The Garage Collective", "Friends who share weekend cars", demo, invite);
+run(
+  "INSERT INTO Club (id,name,description,ownerId,inviteCode,slug,primaryColor,tagline) VALUES (?,?,?,?,?,?,?,?)",
+  club, "The Garage Collective", "Friends who share weekend cars", demo, invite,
+  "the-garage", "#dc2626", "Friends who share weekend cars",
+);
 const addMember = (cid, userId, role) => run("INSERT INTO ClubMembership (id,clubId,userId,role) VALUES (?,?,?,?)", uid(), cid, userId, role);
 addMember(club, demo, "OWNER");
 addMember(club, friend, "MEMBER");
