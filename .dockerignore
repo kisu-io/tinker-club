@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.worktrees
+data
+*.db
+*.db-journal
+.env
+.env.*
+npm-debug.log
+Dockerfile
+.dockerignore
+docs
+design-system
