@@ -1,0 +1,49 @@
+# Production deploy for a single VPS: the app (one instance, persistent SQLite
+# volume) behind Caddy (automatic HTTPS). See deploy/README.md.
+#
+#   cd deploy && cp .env.example .env   # then edit .env
+#   docker compose up -d --build
+#
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+    volumes:
+      # Persistent SQLite lives here (DATA_DIR=/data is baked into the image).
+      - app-data:/data
+    # Internal only — not published to the host; Caddy reaches it over the
+    # compose network. Run exactly ONE replica (SQLite single-writer +
+    # in-process rate limiter).
+    expose:
+      - "3000"
+    healthcheck:
+      # node:22-slim has no curl/wget; use Node's global fetch.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # ACME certs / account keys — keep this volume
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  app-data:
+  caddy-data:
+  caddy-config:
