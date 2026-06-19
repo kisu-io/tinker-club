@@ -13,6 +13,10 @@ services:
     env_file: .env
     environment:
       - NODE_ENV=production
+      # Next.js standalone binds to process.env.HOSTNAME — Docker sets this to
+      # the container ID by default, which resolves to only the eth0 interface.
+      # Force 0.0.0.0 so the in-container healthcheck (127.0.0.1:3000) can reach it.
+      - HOSTNAME=0.0.0.0
     # No volumes — database lives in Supabase (Postgres), reached over the
     # network via DATABASE_URL. Run exactly ONE replica (in-process rate limiter).
     expose:

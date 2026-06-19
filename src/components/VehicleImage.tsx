@@ -25,6 +25,7 @@ export function VehicleImage({
     <img
       src={src}
       alt={alt}
+      loading="lazy"
       onError={() => setFailed(true)}
       className={`object-cover ${className}`}
     />

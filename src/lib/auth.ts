@@ -9,7 +9,7 @@ export async function requireUser() {
 }
 
 export function hashPassword(password: string) {
-  return bcrypt.hash(password, 10);
+  return bcrypt.hash(password, 12);
 }
 
 export function verifyPassword(password: string, hash: string) {

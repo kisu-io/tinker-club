@@ -1,9 +1,12 @@
-import { all, get, run, id } from "./db";
+import { all, get, run, id, tx, conn } from "./db";
+import type postgres from "postgres";
 import { uniqueSlug } from "./slug";
 import type {
   User, Vehicle, Expense, DocumentRow, TimelineEvent, GalleryImage,
   Club, ClubMembership, VehicleShare, Booking, HandoverLog, Visibility,
 } from "./types";
+
+type Sql = ReturnType<typeof postgres>;
 
 /* ---------------- Users ---------------- */
 export const Users = {
@@ -56,7 +59,19 @@ export const Vehicles = {
   setVisibility: async (vid: string, v: Visibility) => run('UPDATE "Vehicle" SET visibility=? WHERE id=?', v, vid),
   setImage: async (vid: string, url: string) => run('UPDATE "Vehicle" SET "imageUrl"=? WHERE id=?', url, vid),
   remove: async (vid: string, uid: string) => run('DELETE FROM "Vehicle" WHERE id=? AND "ownerId"=?', vid, uid),
-  shareCount: async (vid: string) => (await get<{ c: number }>('SELECT COUNT(*) c FROM "VehicleShare" WHERE "vehicleId"=?', vid))!.c,
+  shareCount: async (vid: string) => (await get<{ c: number }>('SELECT COUNT(*) c FROM "VehicleShare" WHERE "vehicleId"=?', vid))?.c ?? 0,
+  /** Bulk fetch share counts for many vehicles in one query (avoids N+1). */
+  shareCounts: async (vids: string[]): Promise<Record<string, number>> => {
+    if (!vids.length) return {};
+    const placeholders = vids.map((_, i) => `$${i + 1}`).join(",");
+    const rows = await all<{ vehicleId: string; c: number }>(
+      `SELECT "vehicleId", COUNT(*) c FROM "VehicleShare" WHERE "vehicleId" IN (${placeholders}) GROUP BY "vehicleId"`,
+      ...vids,
+    );
+    const map: Record<string, number> = {};
+    for (const r of rows) map[r.vehicleId] = r.c;
+    return map;
+  },
 };
 
 /* ---------------- Expenses ---------------- */
@@ -219,6 +234,25 @@ export const Shares = {
        WHERE s."vehicleId" = ? LIMIT 1`, uid, vehicleId),
 };
 
+/** Atomic share + visibility flip. If the car is PRIVATE, sets it to CLUB. */
+export async function shareVehicleAtomic(vehicleId: string, clubId: string, requireApproval: boolean): Promise<void> {
+  const sid = id();
+  await tx(async (sql) => {
+    await sql`INSERT INTO "VehicleShare" (id, "vehicleId", "clubId", "requireApproval") VALUES (${sid}, ${vehicleId}, ${clubId}, ${requireApproval ? 1 : 0}) ON CONFLICT DO NOTHING`;
+    await sql`UPDATE "Vehicle" SET visibility = 'CLUB' WHERE id = ${vehicleId} AND visibility = 'PRIVATE'`;
+  });
+}
+
+/** Atomic unshare + visibility flip back to PRIVATE when no shares remain. */
+export async function unshareVehicleAtomic(vehicleId: string, clubId: string): Promise<void> {
+  await tx(async (sql) => {
+    await sql`DELETE FROM "VehicleShare" WHERE "vehicleId" = ${vehicleId} AND "clubId" = ${clubId}`;
+    await sql`UPDATE "Vehicle" SET visibility = 'PRIVATE'
+      WHERE id = ${vehicleId} AND visibility = 'CLUB'
+      AND NOT EXISTS (SELECT 1 FROM "VehicleShare" WHERE "vehicleId" = ${vehicleId})`;
+  });
+}
+
 /* ---------------- Bookings ---------------- */
 export const Bookings = {
   byId: async (bid: string) => get<Booking>('SELECT * FROM "Booking" WHERE id=?', bid),
@@ -254,29 +288,62 @@ export const Bookings = {
   setStatus: async (bid: string, status: string) => run('UPDATE "Booking" SET status=? WHERE id=?', status, bid),
 };
 
+/**
+ * Atomic booking request: overlap check + insert in one transaction.
+ * Returns { error } on clash, or { bid } on success.
+ */
+export async function requestBookingAtomic(d: {
+  vehicleId: string;
+  borrowerId: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  purpose?: string;
+}): Promise<{ error?: string; bid?: string }> {
+  const result = await tx(async (sql) => {
+    const clashes = await sql`SELECT 1 FROM "Booking"
+      WHERE "vehicleId" = ${d.vehicleId}
+        AND status IN ('PENDING','APPROVED')
+        AND "startDate"::date <= ${d.endDate}::date
+        AND ${d.startDate}::date <= "endDate"::date
+      LIMIT 1`;
+    if (clashes.length) return { error: "Those dates overlap an existing booking." };
+    const bid = id();
+    await sql`INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", status, purpose)
+      VALUES (${bid}, ${d.vehicleId}, ${d.borrowerId}, ${d.startDate}, ${d.endDate}, ${d.status}, ${d.purpose ?? null})`;
+    return { bid };
+  });
+  return result as { error?: string; bid?: string };
+}
+
 /* ---------------- Handover ---------------- */
 export const Handovers = {
   forBooking: async (bid: string) => get<HandoverLog>('SELECT * FROM "HandoverLog" WHERE "bookingId"=?', bid),
+  /**
+   * Upsert a handover log for a booking. Uses ON CONFLICT to avoid the
+   * read-then-write TOCTOU race. Partial updates preserve existing fields
+   * via COALESCE(existing, new).
+   */
   async upsert(bid: string, d: Partial<HandoverLog>) {
-    const existing = await Handovers.forBooking(bid);
-    if (existing) {
-      await run(
-        `UPDATE "HandoverLog" SET "pickupMileageKm"=?, "returnMileageKm"=?, "pickupFuelPct"=?, "returnFuelPct"=?,
-         "conditionNotes"=?, "damageReported"=?, "checklistJson"=?, "pickedUpAt"=?, "returnedAt"=?, "updatedAt"=now() WHERE "bookingId"=?`,
-        d.pickupMileageKm ?? existing.pickupMileageKm, d.returnMileageKm ?? existing.returnMileageKm,
-        d.pickupFuelPct ?? existing.pickupFuelPct, d.returnFuelPct ?? existing.returnFuelPct,
-        d.conditionNotes ?? existing.conditionNotes, d.damageReported ?? existing.damageReported,
-        d.checklistJson ?? existing.checklistJson, d.pickedUpAt ?? existing.pickedUpAt,
-        d.returnedAt ?? existing.returnedAt, bid
-      );
-    } else {
-      await run(
-        `INSERT INTO "HandoverLog" (id, "bookingId", "pickupMileageKm", "returnMileageKm", "pickupFuelPct", "returnFuelPct",
-         "conditionNotes", "damageReported", "checklistJson", "pickedUpAt", "returnedAt") VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-        id(), bid, d.pickupMileageKm ?? null, d.returnMileageKm ?? null, d.pickupFuelPct ?? null, d.returnFuelPct ?? null,
-        d.conditionNotes ?? null, d.damageReported ?? 0, d.checklistJson ?? null, d.pickedUpAt ?? null, d.returnedAt ?? null
-      );
-    }
+    const hid = id();
+    await run(
+      `INSERT INTO "HandoverLog" (id, "bookingId", "pickupMileageKm", "returnMileageKm", "pickupFuelPct", "returnFuelPct",
+       "conditionNotes", "damageReported", "checklistJson", "pickedUpAt", "returnedAt")
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT ("bookingId") DO UPDATE SET
+        "pickupMileageKm" = COALESCE(EXCLUDED."pickupMileageKm", "HandoverLog"."pickupMileageKm"),
+        "returnMileageKm" = COALESCE(EXCLUDED."returnMileageKm", "HandoverLog"."returnMileageKm"),
+        "pickupFuelPct" = COALESCE(EXCLUDED."pickupFuelPct", "HandoverLog"."pickupFuelPct"),
+        "returnFuelPct" = COALESCE(EXCLUDED."returnFuelPct", "HandoverLog"."returnFuelPct"),
+        "conditionNotes" = COALESCE(EXCLUDED."conditionNotes", "HandoverLog"."conditionNotes"),
+        "damageReported" = COALESCE(EXCLUDED."damageReported", "HandoverLog"."damageReported"),
+        "checklistJson" = COALESCE(EXCLUDED."checklistJson", "HandoverLog"."checklistJson"),
+        "pickedUpAt" = COALESCE(EXCLUDED."pickedUpAt", "HandoverLog"."pickedUpAt"),
+        "returnedAt" = COALESCE(EXCLUDED."returnedAt", "HandoverLog"."returnedAt"),
+        "updatedAt" = now()`,
+      hid, bid, d.pickupMileageKm ?? null, d.returnMileageKm ?? null, d.pickupFuelPct ?? null, d.returnFuelPct ?? null,
+      d.conditionNotes ?? null, d.damageReported ?? 0, d.checklistJson ?? null, d.pickedUpAt ?? null, d.returnedAt ?? null
+    );
   },
 };
 
@@ -284,6 +351,20 @@ export const Handovers = {
 export async function categoryTotals(vehicleId: string) {
   return all<{ category: string; total: number }>(
     'SELECT category, SUM(amount) total FROM "Expense" WHERE "vehicleId"=? GROUP BY category ORDER BY total DESC', vehicleId);
+}
+/** Bulk fetch category totals for many vehicles in one query (avoids N+1). */
+export async function categoryTotalsForVehicles(vids: string[]): Promise<Record<string, { category: string; total: number }[]>> {
+  if (!vids.length) return {};
+  const placeholders = vids.map((_, i) => `$${i + 1}`).join(",");
+  const rows = await all<{ vehicleId: string; category: string; total: number }>(
+    `SELECT "vehicleId", category, SUM(amount) total FROM "Expense" WHERE "vehicleId" IN (${placeholders}) GROUP BY "vehicleId", category ORDER BY total DESC`,
+    ...vids,
+  );
+  const map: Record<string, { category: string; total: number }[]> = {};
+  for (const r of rows) {
+    (map[r.vehicleId] ??= []).push({ category: r.category, total: r.total });
+  }
+  return map;
 }
 export async function categoryTotalsForOwner(uid: string) {
   return all<{ category: string; total: number }>(

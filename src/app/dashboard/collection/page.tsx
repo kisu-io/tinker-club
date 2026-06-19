@@ -5,22 +5,23 @@ import { CollectionGrid, VehicleCardData } from "./CollectionGrid";
 
 function firstName(full: string): string {
   const parts = full.trim().split(/\s+/);
-  return parts[parts.length - 1] ?? full;
+  return parts[0] ?? full;
 }
 
 export default async function CollectionPage() {
   const user = await requireUser();
   const vehicles = await Vehicles.ownedBy(user.id);
+  const shareCounts = await Vehicles.shareCounts(vehicles.map((v) => v.id));
 
-  const data: VehicleCardData[] = await Promise.all(vehicles.map(async (v) => ({
+  const data: VehicleCardData[] = vehicles.map((v) => ({
     id: v.id,
     year: v.year,
     make: v.make,
     model: v.model,
     imageUrl: v.imageUrl,
     visibility: v.visibility,
-    sharedCount: await Vehicles.shareCount(v.id),
-  })));
+    sharedCount: shareCounts[v.id] ?? 0,
+  }));
 
   const count = data.length;
   const eyebrow =

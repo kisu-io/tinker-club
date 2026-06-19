@@ -22,7 +22,7 @@ export default function LoginPage() {
           <input name="password" type="password" placeholder="••••••••" className="input" required />
         </div>
 
-        <Link href="#" className="block text-sm font-medium text-ink-700 hover:underline">
+        <Link href="/login" className="block text-sm font-medium text-ink-700 opacity-50 pointer-events-none" aria-disabled="true" title="Password reset is not available yet.">
           Forgot your password?
         </Link>
 

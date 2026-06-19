@@ -21,11 +21,23 @@ const sql = postgres(url, {
   prepare: !isSupabasePooler,
 });
 
-// Load schema
+// Load schema as a single multi-statement query (no fragile `;`-splitter).
+// postgres.js sends this as a simple query, which Postgres parses fine.
 const SCHEMA = fs.readFileSync(path.join(process.cwd(), "scripts", "schema.sql"), "utf8");
-const statements = SCHEMA.split(/;\s*\n/).map((s) => s.trim()).filter((s) => s.length > 0 && !s.startsWith("--"));
-for (const stmt of statements) {
-  await sql.unsafe(stmt);
+await sql.unsafe(SCHEMA);
+
+// Backfill NULL/empty Club slugs from the club name.
+const slugify = (s) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+const nullSlugClubs = await sql`SELECT id, name FROM "Club" WHERE slug IS NULL OR slug = ''`;
+if (nullSlugClubs.length) {
+  const taken = new Set((await sql`SELECT slug FROM "Club" WHERE slug IS NOT NULL AND slug <> ''`).map((r) => r.slug));
+  for (const r of nullSlugClubs) {
+    const base = slugify(r.name);
+    let candidate = base, i = 2;
+    while (taken.has(candidate)) candidate = `${base}-${i++}`;
+    taken.add(candidate);
+    await sql`UPDATE "Club" SET slug = ${candidate} WHERE id = ${r.id}`;
+  }
 }
 
 const uid = () => crypto.randomUUID();

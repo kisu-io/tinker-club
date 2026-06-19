@@ -24,7 +24,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   INSURANCE: "#0f172a",
   FUEL: "#94a3b8",
   TAX: "#334155",
-  PURCHASE: "#7c5cff",
+  PURCHASE: "#dc2626",
   PARTS: "#475569",
   STORAGE: "#cbd5e1",
   OTHER: "#e2e8f0",

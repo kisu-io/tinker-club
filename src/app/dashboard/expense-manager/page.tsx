@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { Vehicles, categoryTotalsForOwner, vehicleCostTotals, categoryTotals } from "@/lib/repo";
+import { Vehicles, categoryTotalsForOwner, vehicleCostTotals, categoryTotalsForVehicles } from "@/lib/repo";
 import { DonutChart } from "@/components/DonutChart";
 import { VehicleImage } from "@/components/VehicleImage";
 import { formatCurrency } from "@/lib/format";
@@ -13,6 +13,8 @@ export default async function ExpenseManagerPage() {
   const grand = totals.reduce((s, t) => s + t.total, 0);
   const perCar = new Map((await vehicleCostTotals(user.id)).map((r) => [r.vehicleId, r.total]));
   const avgAnnual = vehicles.length ? grand / vehicles.length : 0;
+  // Bulk fetch category totals for all vehicles in one query (no N+1).
+  const allCats = await categoryTotalsForVehicles(vehicles.map((v) => v.id));
 
   return (
     <div className="space-y-8">
@@ -45,8 +47,8 @@ export default async function ExpenseManagerPage() {
           <div className="card p-10 text-center text-sm text-ink-400">No cars in your collection yet.</div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {await Promise.all(vehicles.map(async (v) => {
-              const cats = await categoryTotals(v.id);
+            {vehicles.map((v) => {
+              const cats = allCats[v.id] ?? [];
               const total = perCar.get(v.id) ?? 0;
               return (
                 <div key={v.id} className="card overflow-hidden">
@@ -72,7 +74,7 @@ export default async function ExpenseManagerPage() {
                   </div>
                 </div>
               );
-            }))}
+            })}
           </div>
         )}
       </section>

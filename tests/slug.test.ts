@@ -14,10 +14,10 @@ test("slugify falls back to 'group' for empty input", () => {
   assert.equal(slugify("!!!"), "group");
 });
 
-test("uniqueSlug appends a counter when taken", () => {
+test("uniqueSlug appends a counter when taken", async () => {
   const taken = new Set(["mountain-drivers", "mountain-drivers-2"]);
   assert.equal(
-    uniqueSlug("Mountain Drivers", (s) => taken.has(s)),
+    await uniqueSlug("Mountain Drivers", (s) => taken.has(s)),
     "mountain-drivers-3",
   );
 });

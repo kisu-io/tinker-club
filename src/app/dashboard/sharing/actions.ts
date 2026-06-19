@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import {
-  Clubs, Memberships, Shares, Vehicles, Bookings, Handovers,
+  Clubs, Memberships, Vehicles, Bookings, Handovers, Shares,
+  shareVehicleAtomic, unshareVehicleAtomic, requestBookingAtomic,
 } from "@/lib/repo";
+import type { BookingStatus } from "@/lib/types";
 
 // Branding inputs are user-supplied; validate before storing so they can't be
 // abused (CSS-property injection via color, tracking/non-https logo URLs).
@@ -73,9 +75,7 @@ export async function shareVehicle(fd: FormData) {
   const membership = await Memberships.of(clubId, user.id);
   if (!vehicle || !membership) return;
 
-  await Shares.add(vehicleId, clubId, requireApproval);
-  // Reflect shared state on the vehicle visibility badge.
-  if (vehicle.visibility === "PRIVATE") await Vehicles.setVisibility(vehicleId, "CLUB");
+  await shareVehicleAtomic(vehicleId, clubId, requireApproval);
   revalidatePath(`/dashboard/collection/${vehicleId}/share`);
   revalidatePath(`/dashboard/sharing/${clubId}`);
 }
@@ -84,21 +84,21 @@ export async function unshareVehicle(vehicleId: string, clubId: string) {
   const user = await requireUser();
   const vehicle = await Vehicles.forOwner(vehicleId, user.id);
   if (!vehicle) return;
-  await Shares.remove(vehicleId, clubId);
-  if ((await Vehicles.shareCount(vehicleId)) === 0 && vehicle.visibility === "CLUB") {
-    await Vehicles.setVisibility(vehicleId, "PRIVATE");
-  }
+  await unshareVehicleAtomic(vehicleId, clubId);
   revalidatePath(`/dashboard/collection/${vehicleId}/share`);
   revalidatePath(`/dashboard/sharing/${clubId}`);
 }
 
 /* ---------------- Bookings ---------------- */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export async function requestBooking(fd: FormData) {
   const user = await requireUser();
   const vehicleId = String(fd.get("vehicleId"));
   const startDate = String(fd.get("startDate"));
   const endDate = String(fd.get("endDate"));
   if (!startDate || !endDate) return { error: "Pick both dates." };
+  if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) return { error: "Dates must be YYYY-MM-DD." };
   if (new Date(endDate) < new Date(startDate)) return { error: "End date must be after start date." };
 
   const vehicle = await Vehicles.byId(vehicleId);
@@ -107,18 +107,17 @@ export async function requestBooking(fd: FormData) {
   const access = await Shares.isBookableBy(vehicleId, user.id);
   if (!access) return { error: "This car isn't shared with any of your clubs." };
 
-  const clashes = await Bookings.overlapping(vehicleId, startDate, endDate);
-  if (clashes.length) return { error: "Those dates overlap an existing booking." };
-
   const status = access.requireApproval ? "PENDING" : "APPROVED";
-  await Bookings.create({
+  const purpose = String(fd.get("purpose") || "").trim() || undefined;
+  const result = await requestBookingAtomic({
     vehicleId,
     borrowerId: user.id,
     startDate,
     endDate,
     status,
-    purpose: String(fd.get("purpose") || "") || undefined,
+    purpose,
   });
+  if (result.error) return { error: result.error };
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${vehicleId}/share`);
   return { ok: true, status };
@@ -130,6 +129,8 @@ export async function decideBooking(bookingId: string, decision: "APPROVED" | "D
   if (!booking) return;
   const vehicle = await Vehicles.forOwner(booking.vehicleId, user.id); // only owner decides
   if (!vehicle) return;
+  // State machine: only PENDING bookings can be approved/declined.
+  if (booking.status !== "PENDING") return;
   await Bookings.setStatus(bookingId, decision);
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${booking.vehicleId}/share`);
@@ -139,6 +140,8 @@ export async function cancelBooking(bookingId: string) {
   const user = await requireUser();
   const booking = await Bookings.byId(bookingId);
   if (!booking) return;
+  // State machine: can't cancel a completed or already-cancelled booking.
+  if (booking.status === "COMPLETED" || booking.status === "CANCELLED") return;
   const isBorrower = booking.borrowerId === user.id;
   const isOwner = !!(await Vehicles.forOwner(booking.vehicleId, user.id));
   if (!isBorrower && !isOwner) return;
@@ -151,6 +154,8 @@ export async function completeBooking(bookingId: string) {
   const user = await requireUser();
   const booking = await Bookings.byId(bookingId);
   if (!booking) return;
+  // State machine: only APPROVED bookings can be completed.
+  if (booking.status !== "APPROVED") return;
   const isOwner = !!(await Vehicles.forOwner(booking.vehicleId, user.id));
   if (!isOwner && booking.borrowerId !== user.id) return;
   await Bookings.setStatus(bookingId, "COMPLETED");
@@ -187,10 +192,12 @@ export async function saveHandover(bookingId: string, phase: "pickup" | "return"
           conditionNotes: String(fd.get("notes") || "") || undefined,
           returnedAt: new Date().toISOString(),
         };
-  await Handovers.upsert(bookingId, data as any);
+  await Handovers.upsert(bookingId, data);
 
-  // Returning the car completes the booking.
-  if (phase === "return") await Bookings.setStatus(bookingId, "COMPLETED");
+  // Returning the car completes the booking (only if APPROVED).
+  if (phase === "return" && booking.status === "APPROVED") {
+    await Bookings.setStatus(bookingId, "COMPLETED");
+  }
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/sharing/booking/${bookingId}`);
 }

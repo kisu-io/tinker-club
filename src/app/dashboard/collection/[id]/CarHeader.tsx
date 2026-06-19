@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef, useEffect } from "react";
 import { ChevronLeft } from "@/components/icons";
 import { setVisibility } from "../actions";
 import type { Visibility } from "@/lib/types";
@@ -11,7 +11,7 @@ const TABS = ["profile", "gallery", "documents", "expenses", "timeline", "share"
 
 const visMeta: Record<Visibility, { label: string; dot: string }> = {
   PRIVATE: { label: "Private", dot: "bg-ink-400" },
-  CLUB: { label: "Shared", dot: "bg-violet-500" },
+  CLUB: { label: "Shared", dot: "bg-accent" },
   PUBLIC: { label: "Public", dot: "bg-emerald-500" },
 };
 
@@ -20,6 +20,7 @@ export function CarHeader({ id, title, visibility }: { id: string; title: string
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
+  const menuRef = useRef<HTMLDivElement>(null);
   const base = `/dashboard/collection/${id}`;
   const current = TABS.find((t) => pathname.endsWith(`/${t}`)) ?? "profile";
 
@@ -31,19 +32,41 @@ export function CarHeader({ id, title, visibility }: { id: string; title: string
     });
   }
 
+  // Close menu on click outside.
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  // Close menu on Escape.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
   const meta = visMeta[visibility];
+  const visOptions = Object.keys(visMeta) as Visibility[];
 
   return (
     <div className="border-b border-ink-100 pb-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Link href="/dashboard/collection" className="rounded-lg p-1 text-ink-500 hover:bg-ink-50">
+          <Link href="/dashboard/collection" aria-label="Back to collection" className="rounded-lg p-1 text-ink-500 hover:bg-ink-50">
             <ChevronLeft />
           </Link>
           <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">{title}</h1>
-          <div className="relative">
+          <div ref={menuRef} className="relative">
             <button
               onClick={() => setOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              aria-label={`Visibility: ${meta.label}. Change visibility.`}
               className="pill bg-ink-50 text-ink-700 hover:bg-ink-100"
               disabled={pending}
             >
@@ -51,10 +74,11 @@ export function CarHeader({ id, title, visibility }: { id: string; title: string
               {meta.label}
             </button>
             {open && (
-              <div className="absolute left-0 z-20 mt-1 w-44 rounded-xl border border-ink-100 bg-white p-1 shadow-card">
-                {(Object.keys(visMeta) as Visibility[]).map((v) => (
+              <div role="menu" aria-label="Change visibility" className="absolute left-0 z-20 mt-1 w-44 rounded-xl border border-ink-100 bg-white p-1 shadow-card">
+                {visOptions.map((v) => (
                   <button
                     key={v}
+                    role="menuitem"
                     onClick={() => change(v)}
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-ink-50"
                   >

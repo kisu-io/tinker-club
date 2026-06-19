@@ -38,7 +38,10 @@ export default async function ProfilePage({ params }: { params: { id: string } }
   const v = await Vehicles.forOwner(params.id, user.id);
   if (!v) notFound();
 
-  const facts: string[] = v.keyFacts ? JSON.parse(v.keyFacts) : [];
+  const facts: string[] = (() => {
+    if (!v.keyFacts) return [];
+    try { return JSON.parse(v.keyFacts); } catch { return []; }
+  })();
   const stats = await Timeline.stats(v.id);
   const upcoming = await Timeline.upcoming(v.id);
 
