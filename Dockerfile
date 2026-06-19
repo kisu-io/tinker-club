@@ -28,6 +28,11 @@ ENV PORT=3000
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/scripts ./scripts
+# serverExternalPackages (postgres, bcryptjs) are NOT bundled by Next into the
+# standalone output. Copy them from the full node_modules so they're available
+# at runtime for dynamic require().
+COPY --from=build /app/node_modules/postgres ./node_modules/postgres
+COPY --from=build /app/node_modules/bcryptjs ./node_modules/bcryptjs
 # Postgres connection is via DATABASE_URL env var at runtime — no local DB volume.
 EXPOSE 3000
 CMD ["node", "server.js"]
