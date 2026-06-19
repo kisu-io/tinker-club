@@ -11,21 +11,6 @@ const nextConfig = {
       { protocol: "https", hostname: "images.unsplash.com" },
     ],
   },
-  // When serving over plain HTTP (no domain/HTTPS yet), Next's default CSP
-  // includes `upgrade-insecure-requests` which makes the browser try HTTPS for
-  // all subresources — and fail because there's no HTTPS listener. Disable the
-  // strict CSP until we have a real domain + HTTPS via Caddy.
-  async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          { key: "Content-Security-Policy", value: "" },
-          { key: "Strict-Transport-Security", value: "" },
-        ],
-      },
-    ];
-  },
 };
 
 module.exports = nextConfig;

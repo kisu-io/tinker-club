@@ -11,6 +11,10 @@ function nonce(): string {
 }
 
 const isProd = process.env.NODE_ENV === "production";
+// Only enforce upgrade-insecure-requests + HSTS when we actually have a real
+// domain with HTTPS (DOMAIN set and not ":80"). When serving over plain HTTP
+// (no domain yet), these headers break all subresources in the browser.
+const hasHttps = isProd && !!process.env.DOMAIN && process.env.DOMAIN !== ":80";
 
 function buildCsp(n: string): string {
   const directives = [
@@ -34,7 +38,7 @@ function buildCsp(n: string): string {
     "form-action 'self'",
     "frame-ancestors 'none'",
     "frame-src 'none'",
-    isProd ? "upgrade-insecure-requests" : "",
+    hasHttps ? "upgrade-insecure-requests" : "",
   ];
   return directives.filter(Boolean).join("; ");
 }
@@ -65,7 +69,7 @@ export function middleware(req: NextRequest) {
     "Permissions-Policy",
     "camera=(), microphone=(), geolocation=(), interest-cohort=()",
   );
-  if (isProd) {
+  if (hasHttps) {
     res.headers.set(
       "Strict-Transport-Security",
       "max-age=31536000; includeSubDomains",
