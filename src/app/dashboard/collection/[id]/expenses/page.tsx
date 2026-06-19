@@ -9,11 +9,11 @@ import { deleteExpense } from "../detail-actions";
 
 export default async function ExpensesPage({ params }: { params: { id: string } }) {
   const user = await requireUser();
-  const v = Vehicles.forOwner(params.id, user.id);
+  const v = await Vehicles.forOwner(params.id, user.id);
   if (!v) notFound();
 
-  const expenses = Expenses.forVehicle(v.id);
-  const totals = categoryTotals(v.id);
+  const expenses = await Expenses.forVehicle(v.id);
+  const totals = await categoryTotals(v.id);
   const totalCost = totals.reduce((s, t) => s + t.total, 0);
   const years = Math.max(1, new Date().getFullYear() - v.year + 1);
   const avgAnnual = totalCost / years;

@@ -8,14 +8,14 @@ import { DecisionButtons, CancelButton } from "../../../sharing/BookingButtons";
 
 export default async function SharePage({ params }: { params: { id: string } }) {
   const user = await requireUser();
-  const v = Vehicles.forOwner(params.id, user.id);
+  const v = await Vehicles.forOwner(params.id, user.id);
   if (!v) notFound();
 
-  const myClubs = Clubs.forUser(user.id).map((c) => ({ id: c.id, name: c.name }));
-  const shares = Shares.forVehicle(v.id);
+  const myClubs = (await Clubs.forUser(user.id)).map((c) => ({ id: c.id, name: c.name }));
+  const shares = await Shares.forVehicle(v.id);
   const sharedClubIds = new Set(shares.map((s) => s.clubId));
   const availableClubs = myClubs.filter((c) => !sharedClubIds.has(c.id));
-  const bookings = Bookings.forVehicle(v.id);
+  const bookings = await Bookings.forVehicle(v.id);
   const pending = bookings.filter((b) => b.status === "PENDING");
   const upcoming = bookings.filter((b) => b.status === "APPROVED");
 

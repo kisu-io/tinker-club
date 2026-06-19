@@ -10,18 +10,18 @@ import { HandoverForm } from "./HandoverForm";
 
 export default async function BookingPage({ params }: { params: { bookingId: string } }) {
   const user = await requireUser();
-  const booking = Bookings.byId(params.bookingId);
+  const booking = await Bookings.byId(params.bookingId);
   if (!booking) notFound();
-  const vehicle = Vehicles.byId(booking.vehicleId);
+  const vehicle = await Vehicles.byId(booking.vehicleId);
   if (!vehicle) notFound();
 
   const isOwner = vehicle.ownerId === user.id;
   const isBorrower = booking.borrowerId === user.id;
   if (!isOwner && !isBorrower) notFound();
 
-  const borrower = Users.byId(booking.borrowerId);
-  const owner = Users.byId(vehicle.ownerId);
-  const handover = Handovers.forBooking(booking.id);
+  const borrower = await Users.byId(booking.borrowerId);
+  const owner = await Users.byId(vehicle.ownerId);
+  const handover = await Handovers.forBooking(booking.id);
   const pickedUp = !!handover?.pickedUpAt;
   const returned = !!handover?.returnedAt;
 

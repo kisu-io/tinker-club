@@ -8,8 +8,8 @@ import { BookForm } from "@/app/dashboard/sharing/BookingButtons";
 export default async function GroupHome({ params }: { params: { slug: string } }) {
   const { user, club, isOwner } = await requireGroupMember(params.slug);
 
-  const members = Memberships.forClub(club.id);
-  const shared = Shares.forClub(club.id);
+  const members = await Memberships.forClub(club.id);
+  const shared = await Shares.forClub(club.id);
 
   return (
     <div className="space-y-7">

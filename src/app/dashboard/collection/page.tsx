@@ -10,17 +10,17 @@ function firstName(full: string): string {
 
 export default async function CollectionPage() {
   const user = await requireUser();
-  const vehicles = Vehicles.ownedBy(user.id);
+  const vehicles = await Vehicles.ownedBy(user.id);
 
-  const data: VehicleCardData[] = vehicles.map((v) => ({
+  const data: VehicleCardData[] = await Promise.all(vehicles.map(async (v) => ({
     id: v.id,
     year: v.year,
     make: v.make,
     model: v.model,
     imageUrl: v.imageUrl,
     visibility: v.visibility,
-    sharedCount: Vehicles.shareCount(v.id),
-  }));
+    sharedCount: await Vehicles.shareCount(v.id),
+  })));
 
   const count = data.length;
   const eyebrow =

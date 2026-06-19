@@ -1,67 +1,76 @@
 // Seeds a rich demo dataset. Idempotent: wipes and re-inserts demo data.
-// Run with: npm run seed   (Node 22+ for node:sqlite)
-import { DatabaseSync } from "node:sqlite";
+// Run with: npm run seed
+// Requires DATABASE_URL env var pointing to Postgres (Supabase or local).
+import postgres from "postgres";
 import bcrypt from "bcryptjs";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const dir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(process.cwd(), "data");
-fs.mkdirSync(dir, { recursive: true });
-const db = new DatabaseSync(path.join(dir, "app.db"));
-db.exec("PRAGMA foreign_keys = ON;");
+const url = process.env.DATABASE_URL;
+if (!url) {
+  console.error("DATABASE_URL is not set. Set it to your Postgres/Supabase connection string.");
+  process.exit(1);
+}
 
+const isSupabasePooler = /supabase\.com/.test(url) || /:6543/.test(url);
+const sql = postgres(url, {
+  max: 5,
+  idle_timeout: 30,
+  connect_timeout: 30,
+  prepare: !isSupabasePooler,
+});
+
+// Load schema
 const SCHEMA = fs.readFileSync(path.join(process.cwd(), "scripts", "schema.sql"), "utf8");
-db.exec(SCHEMA);
+const statements = SCHEMA.split(/;\s*\n/).map((s) => s.trim()).filter((s) => s.length > 0 && !s.startsWith("--"));
+for (const stmt of statements) {
+  await sql.unsafe(stmt);
+}
 
 const uid = () => crypto.randomUUID();
-const run = (sql, ...p) => db.prepare(sql).run(...p);
 const now = new Date();
 const iso = (d) => d.toISOString();
 const daysFromNow = (n) => { const d = new Date(now); d.setDate(d.getDate() + n); return iso(d).slice(0, 10); };
 
-// Wipe (children first)
-for (const t of ["HandoverLog","Booking","VehicleShare","ClubMembership","Club","GalleryImage","TimelineEvent","Document","Expense","Vehicle","User"]) {
-  db.exec(`DELETE FROM ${t};`);
+// Wipe (children first) — use quoted identifiers to match the schema
+for (const t of ['"HandoverLog"','"Booking"','"VehicleShare"','"ClubMembership"','"Club"','"GalleryImage"','"TimelineEvent"','"Document"','"Expense"','"Vehicle"','"User"']) {
+  await sql.unsafe(`DELETE FROM ${t};`);
 }
 
 const hash = bcrypt.hashSync("password", 10);
 
 // Users
 const demo = uid(), friend = uid(), friend2 = uid();
-run("INSERT INTO User (id,email,name,passwordHash) VALUES (?,?,?,?)", demo, "demo@mycollection.world", "Pham Khoi Nguyen", hash);
-run("INSERT INTO User (id,email,name,passwordHash) VALUES (?,?,?,?)", friend, "alex@example.com", "Alex Rivera", hash);
-run("INSERT INTO User (id,email,name,passwordHash) VALUES (?,?,?,?)", friend2, "sam@example.com", "Sam Becker", hash);
+await sql`INSERT INTO "User" (id, email, name, "passwordHash") VALUES (${demo}, ${"demo@mycollection.world"}, ${"Pham Khoi Nguyen"}, ${hash})`;
+await sql`INSERT INTO "User" (id, email, name, "passwordHash") VALUES (${friend}, ${"alex@example.com"}, ${"Alex Rivera"}, ${hash})`;
+await sql`INSERT INTO "User" (id, email, name, "passwordHash") VALUES (${friend2}, ${"sam@example.com"}, ${"Sam Becker"}, ${hash})`;
 
-function vehicle(ownerId, year, make, model, imageUrl, opts = {}) {
+async function vehicle(ownerId, year, make, model, imageUrl, opts = {}) {
   const id = uid();
-  run(
-    `INSERT INTO Vehicle
-      (id,ownerId,year,make,model,imageUrl,cylinders,performanceKw,mileageKm,color,visibility,
-       vehicleType,bodyStyle,previousOwners,unitsProduced,transmissionNumber,location,
-       gearbox,driveType,driversSide,matchingNumbers,vin,keyFacts,overview)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    id, ownerId, year, make, model, imageUrl, opts.cylinders ?? null, opts.kw ?? null, opts.km ?? 0, opts.color ?? null, opts.visibility ?? "PRIVATE",
-    opts.vehicleType ?? null, opts.bodyStyle ?? null, opts.previousOwners ?? null, opts.unitsProduced ?? null,
-    opts.transmissionNumber ?? null, opts.location ?? null, opts.gearbox ?? null, opts.driveType ?? null,
-    opts.driversSide ?? null, opts.matchingNumbers ? 1 : 0, opts.vin ?? null,
-    opts.keyFacts ? JSON.stringify(opts.keyFacts) : null, opts.overview ?? null
-  );
+  await sql`INSERT INTO "Vehicle"
+    (id, "ownerId", year, make, model, "imageUrl", cylinders, "performanceKw", "mileageKm", color, visibility,
+     "vehicleType", "bodyStyle", "previousOwners", "unitsProduced", "transmissionNumber", location,
+     gearbox, "driveType", "driversSide", "matchingNumbers", vin, "keyFacts", overview)
+    VALUES (${id}, ${ownerId}, ${year}, ${make}, ${model}, ${imageUrl}, ${opts.cylinders ?? null}, ${opts.kw ?? null}, ${opts.km ?? 0}, ${opts.color ?? null}, ${opts.visibility ?? "PRIVATE"},
+      ${opts.vehicleType ?? null}, ${opts.bodyStyle ?? null}, ${opts.previousOwners ?? null}, ${opts.unitsProduced ?? null},
+      ${opts.transmissionNumber ?? null}, ${opts.location ?? null}, ${opts.gearbox ?? null}, ${opts.driveType ?? null},
+      ${opts.driversSide ?? null}, ${opts.matchingNumbers ? 1 : 0}, ${opts.vin ?? null},
+      ${opts.keyFacts ? JSON.stringify(opts.keyFacts) : null}, ${opts.overview ?? null})`;
   return id;
 }
-function timeline(vid, year, title, desc, category = "HISTORY", eventDate = null) {
-  run("INSERT INTO TimelineEvent (id,vehicleId,year,title,description,category,eventDate) VALUES (?,?,?,?,?,?,?)",
-    uid(), vid, year, title, desc, category, eventDate);
+async function timeline(vid, year, title, desc, category = "HISTORY", eventDate = null) {
+  await sql`INSERT INTO "TimelineEvent" (id, "vehicleId", year, title, description, category, "eventDate") VALUES (${uid()}, ${vid}, ${year}, ${title}, ${desc}, ${category}, ${eventDate})`;
 }
-function expense(vid, name, cat, amount, daysAgo) {
+async function expense(vid, name, cat, amount, daysAgo) {
   const d = new Date(now); d.setDate(d.getDate() - daysAgo);
-  run("INSERT INTO Expense (id,vehicleId,name,category,type,amount,date) VALUES (?,?,?,?,?,?,?)", uid(), vid, name, cat, "QUICK COST", amount, iso(d));
+  await sql`INSERT INTO "Expense" (id, "vehicleId", name, category, type, amount, date) VALUES (${uid()}, ${vid}, ${name}, ${cat}, ${"QUICK COST"}, ${amount}, ${iso(d)})`;
 }
-function doc(vid, name, cat, type, byId) {
-  run("INSERT INTO Document (id,vehicleId,name,category,type,uploadedById) VALUES (?,?,?,?,?,?)", uid(), vid, name, cat, type, byId);
+async function doc(vid, name, cat, type, byId) {
+  await sql`INSERT INTO "Document" (id, "vehicleId", name, category, type, "uploadedById") VALUES (${uid()}, ${vid}, ${name}, ${cat}, ${type}, ${byId})`;
 }
-function gallery(vid, url, caption) {
-  run("INSERT INTO GalleryImage (id,vehicleId,url,caption) VALUES (?,?,?,?)", uid(), vid, url, caption);
+async function gallery(vid, url, caption) {
+  await sql`INSERT INTO "GalleryImage" (id, "vehicleId", url, caption) VALUES (${uid()}, ${vid}, ${url}, ${caption})`;
 }
 
 const IMG = {
@@ -72,7 +81,7 @@ const IMG = {
 };
 
 // Demo's cars
-const scirocco = vehicle(demo, 2010, "Volkswagen", "Scirocco", IMG.scirocco, {
+const scirocco = await vehicle(demo, 2010, "Volkswagen", "Scirocco", IMG.scirocco, {
   cylinders: 4, kw: 118, km: 84210, color: "Silver / blue stripes",
   vehicleType: "STREETCAR", bodyStyle: "HATCHBACK", previousOwners: 1, unitsProduced: null,
   transmissionNumber: "02Q-DSG", location: "Munich, Germany",
@@ -87,19 +96,19 @@ const scirocco = vehicle(demo, 2010, "Volkswagen", "Scirocco", IMG.scirocco, {
   ],
   overview: "The Volkswagen Scirocco is a sporty coupe that blends everyday usability with an engaging drive. Its aerodynamic silhouette emphasises a sporty character while the cabin keeps the driver at the centre. The 2010 model offered a broad engine range and remains a favourite among enthusiasts for its balance of style, efficiency and handling.",
 });
-timeline(scirocco, 2010, "The beginning", "This is the year the car was created.", "HISTORY");
-timeline(scirocco, 2016, "Bought from first owner", "Acquired with full service history at 52,000 km.", "ADMIN");
-timeline(scirocco, 2021, "Custom racing stripes", "Blue twin stripes added during a full detail.", "RESTORATION");
-timeline(scirocco, 2025, "Major service due", "Cambelt and water pump service scheduled.", "SERVICE", daysFromNow(21));
-expense(scirocco, "Annual service", "SERVICE", 300, 5);
-expense(scirocco, "Insurance renewal", "INSURANCE", 640, 40);
-expense(scirocco, "New tyres", "PARTS", 480, 120);
-expense(scirocco, "Road tax", "TAX", 180, 60);
-doc(scirocco, "Registration certificate", "REGISTRATION", "PDF", demo);
-doc(scirocco, "Service invoice 2025", "INVOICE", "PDF", demo);
-gallery(scirocco, IMG.scirocco, "Front three-quarter");
+await timeline(scirocco, 2010, "The beginning", "This is the year the car was created.", "HISTORY");
+await timeline(scirocco, 2016, "Bought from first owner", "Acquired with full service history at 52,000 km.", "ADMIN");
+await timeline(scirocco, 2021, "Custom racing stripes", "Blue twin stripes added during a full detail.", "RESTORATION");
+await timeline(scirocco, 2025, "Major service due", "Cambelt and water pump service scheduled.", "SERVICE", daysFromNow(21));
+await expense(scirocco, "Annual service", "SERVICE", 300, 5);
+await expense(scirocco, "Insurance renewal", "INSURANCE", 640, 40);
+await expense(scirocco, "New tyres", "PARTS", 480, 120);
+await expense(scirocco, "Road tax", "TAX", 180, 60);
+await doc(scirocco, "Registration certificate", "REGISTRATION", "PDF", demo);
+await doc(scirocco, "Service invoice 2025", "INVOICE", "PDF", demo);
+await gallery(scirocco, IMG.scirocco, "Front three-quarter");
 
-const porsche = vehicle(demo, 1989, "Porsche", "911 Carrera", IMG.porsche, {
+const porsche = await vehicle(demo, 1989, "Porsche", "911 Carrera", IMG.porsche, {
   cylinders: 6, kw: 170, km: 132000, color: "Guards Red",
   vehicleType: "STREETCAR", bodyStyle: "COUPE", previousOwners: 3,
   gearbox: "MANUAL", driveType: "REAR WHEEL DRIVE (RWD)", driversSide: "LEFT-HAND DRIVE (LHD)",
@@ -107,63 +116,55 @@ const porsche = vehicle(demo, 1989, "Porsche", "911 Carrera", IMG.porsche, {
   overview: "An air-cooled 911 Carrera — the last of the original 911 lineage before the 964. Revered for its mechanical purity, naturally-aspirated flat-six soundtrack and timeless silhouette.",
   keyFacts: ["Air-cooled 3.2L flat-six.", "Final year of the original 911 body (G-series).", "Manual G50 gearbox.", "An enduring collector favourite."],
 });
-timeline(porsche, 1989, "The beginning", "This is the year the car was created.", "HISTORY");
-timeline(porsche, 2019, "Engine rebuild", "Top-end refresh and new clutch.", "SERVICE");
-expense(porsche, "Engine rebuild", "SERVICE", 6200, 200);
-expense(porsche, "Classic insurance", "INSURANCE", 950, 30);
-expense(porsche, "Storage (winter)", "STORAGE", 600, 90);
-doc(porsche, "Owner's manual", "MANUAL", "PDF", demo);
-gallery(porsche, IMG.porsche, "Garage queen");
+await timeline(porsche, 1989, "The beginning", "This is the year the car was created.", "HISTORY");
+await timeline(porsche, 2019, "Engine rebuild", "Top-end refresh and new clutch.", "SERVICE");
+await expense(porsche, "Engine rebuild", "SERVICE", 6200, 200);
+await expense(porsche, "Classic insurance", "INSURANCE", 950, 30);
+await expense(porsche, "Storage (winter)", "STORAGE", 600, 90);
+await doc(porsche, "Owner's manual", "MANUAL", "PDF", demo);
+await gallery(porsche, IMG.porsche, "Garage queen");
 
 // Friend's cars
-const defender = vehicle(friend, 1997, "Land Rover", "Defender 90", IMG.defender, { cylinders: 4, kw: 83, km: 210400, color: "Coniston Green" });
-timeline(defender, 1997, "The beginning", "This is the year the car was created.");
-expense(defender, "Clutch replacement", "SERVICE", 720, 80);
+const defender = await vehicle(friend, 1997, "Land Rover", "Defender 90", IMG.defender, { cylinders: 4, kw: 83, km: 210400, color: "Coniston Green" });
+await timeline(defender, 1997, "The beginning", "This is the year the car was created.");
+await expense(defender, "Clutch replacement", "SERVICE", 720, 80);
 
-const mustang = vehicle(friend2, 1968, "Ford", "Mustang Fastback", IMG.mustang, { cylinders: 8, kw: 240, km: 98000, color: "Highland Green" });
-timeline(mustang, 1968, "The beginning", "This is the year the car was created.");
+const mustang = await vehicle(friend2, 1968, "Ford", "Mustang Fastback", IMG.mustang, { cylinders: 8, kw: 240, km: 98000, color: "Highland Green" });
+await timeline(mustang, 1968, "The beginning", "This is the year the car was created.");
 
 // Club owned by demo, with friend + friend2 as members
 const club = uid();
 const invite = "GARAGE";
-run(
-  "INSERT INTO Club (id,name,description,ownerId,inviteCode,slug,primaryColor,tagline) VALUES (?,?,?,?,?,?,?,?)",
-  club, "The Garage Collective", "Friends who share weekend cars", demo, invite,
-  "the-garage", "#dc2626", "Friends who share weekend cars",
-);
-const addMember = (cid, userId, role) => run("INSERT INTO ClubMembership (id,clubId,userId,role) VALUES (?,?,?,?)", uid(), cid, userId, role);
-addMember(club, demo, "OWNER");
-addMember(club, friend, "MEMBER");
-addMember(club, friend2, "MEMBER");
+await sql`INSERT INTO "Club" (id, name, description, "ownerId", "inviteCode", slug, "primaryColor", tagline) VALUES (${club}, ${"The Garage Collective"}, ${"Friends who share weekend cars"}, ${demo}, ${invite}, ${"the-garage"}, ${"#dc2626"}, ${"Friends who share weekend cars"})`;
+const addMember = (cid, userId, role) => sql`INSERT INTO "ClubMembership" (id, "clubId", "userId", role) VALUES (${uid()}, ${cid}, ${userId}, ${role})`;
+await addMember(club, demo, "OWNER");
+await addMember(club, friend, "MEMBER");
+await addMember(club, friend2, "MEMBER");
 
 // Shares: demo shares Scirocco (approval), friend shares Defender (instant), friend2 shares Mustang (approval)
-const share = (vid, requireApproval) => run("INSERT INTO VehicleShare (id,vehicleId,clubId,requireApproval) VALUES (?,?,?,?)", uid(), vid, club, requireApproval ? 1 : 0);
-share(scirocco, true);
-run("UPDATE Vehicle SET visibility='CLUB' WHERE id=?", scirocco);
-share(defender, false);
-run("UPDATE Vehicle SET visibility='CLUB' WHERE id=?", defender);
-share(mustang, true);
-run("UPDATE Vehicle SET visibility='CLUB' WHERE id=?", mustang);
+const share = (vid, requireApproval) => sql`INSERT INTO "VehicleShare" (id, "vehicleId", "clubId", "requireApproval") VALUES (${uid()}, ${vid}, ${club}, ${requireApproval ? 1 : 0}) ON CONFLICT DO NOTHING`;
+await share(scirocco, true);
+await sql`UPDATE "Vehicle" SET visibility='CLUB' WHERE id=${scirocco}`;
+await share(defender, false);
+await sql`UPDATE "Vehicle" SET visibility='CLUB' WHERE id=${defender}`;
+await share(mustang, true);
+await sql`UPDATE "Vehicle" SET visibility='CLUB' WHERE id=${mustang}`;
 
 // Bookings
-const booking = (vid, borrowerId, start, end, status, purpose) => {
+function booking(vid, borrowerId, start, end, status, purpose) {
   const id = uid();
-  run("INSERT INTO Booking (id,vehicleId,borrowerId,startDate,endDate,status,purpose) VALUES (?,?,?,?,?,?,?)", id, vid, borrowerId, start, end, status, purpose);
-  return id;
-};
+  return sql`INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", status, purpose) VALUES (${id}, ${vid}, ${borrowerId}, ${start}, ${end}, ${status}, ${purpose})`.then(() => id);
+}
 // Incoming request for demo (friend wants the Scirocco)
-booking(scirocco, friend, daysFromNow(7), daysFromNow(9), "PENDING", "Weekend road trip");
+await booking(scirocco, friend, daysFromNow(7), daysFromNow(9), "PENDING", "Weekend road trip");
 // Demo has an approved booking on the friend's Defender
-const b2 = booking(defender, demo, daysFromNow(2), daysFromNow(4), "APPROVED", "Camping trip");
+const b2 = await booking(defender, demo, daysFromNow(2), daysFromNow(4), "APPROVED", "Camping trip");
 // Demo completed a past booking on the Mustang, with handover log
-const b3 = booking(mustang, demo, daysFromNow(-10), daysFromNow(-8), "COMPLETED", "Cars & coffee");
-run(
-  "INSERT INTO HandoverLog (id,bookingId,pickupMileageKm,returnMileageKm,pickupFuelPct,returnFuelPct,checklistJson,pickedUpAt,returnedAt) VALUES (?,?,?,?,?,?,?,?,?)",
-  uid(), b3, 97950, 98000, 90, 60, JSON.stringify(["Exterior walk-around photos taken","Documents and keys present"]), daysFromNow(-10), daysFromNow(-8)
-);
+const b3 = await booking(mustang, demo, daysFromNow(-10), daysFromNow(-8), "COMPLETED", "Cars & coffee");
+await sql`INSERT INTO "HandoverLog" (id, "bookingId", "pickupMileageKm", "returnMileageKm", "pickupFuelPct", "returnFuelPct", "checklistJson", "pickedUpAt", "returnedAt") VALUES (${uid()}, ${b3}, ${97950}, ${98000}, ${90}, ${60}, ${JSON.stringify(["Exterior walk-around photos taken","Documents and keys present"])}, ${daysFromNow(-10)}, ${daysFromNow(-8)})`;
 
 console.log("Seeded demo data.");
 console.log("Login: demo@mycollection.world / password");
 console.log("Also: alex@example.com / password, sam@example.com / password");
 console.log("Club invite code: " + invite);
-db.close();
+await sql.end();

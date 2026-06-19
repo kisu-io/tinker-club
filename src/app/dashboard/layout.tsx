@@ -14,7 +14,7 @@ function initialsOf(name: string) {
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
-  const groups = Clubs.forUser(user.id).map((c) => ({ slug: c.slug, name: c.name }));
+  const groups = (await Clubs.forUser(user.id)).map((c) => ({ slug: c.slug, name: c.name }));
   return (
     <div className="min-h-screen bg-white">
       <TopNav initials={initialsOf(user.name)} groups={groups} />

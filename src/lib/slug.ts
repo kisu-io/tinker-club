@@ -15,13 +15,17 @@ export function slugify(input: string): string {
 /**
  * Returns a slug derived from `name` that `exists` reports as free.
  * Appends -2, -3, ... on collision.
+ * `exists` may be sync `(slug) => boolean` or async `(slug) => Promise<boolean>`.
  */
-export function uniqueSlug(name: string, exists: (slug: string) => boolean): string {
+export async function uniqueSlug(
+  name: string,
+  exists: (slug: string) => boolean | Promise<boolean>,
+): Promise<string> {
   const base = slugify(name);
-  if (!exists(base)) return base;
+  if (!(await exists(base))) return base;
   for (let i = 2; i < 10000; i++) {
     const candidate = `${base}-${i}`;
-    if (!exists(candidate)) return candidate;
+    if (!(await exists(candidate))) return candidate;
   }
   // Practically unreachable at <20 groups.
   return `${base}-${base.length}-x`;

@@ -4,9 +4,9 @@ import { logoutAction } from "@/app/(auth)/actions";
 
 export default async function ProfilePage() {
   const user = await requireUser();
-  const cars = Vehicles.ownedBy(user.id).length;
-  const clubs = Clubs.forUser(user.id).length;
-  const bookings = Bookings.byBorrower(user.id).length;
+  const cars = (await Vehicles.ownedBy(user.id)).length;
+  const clubs = (await Clubs.forUser(user.id)).length;
+  const bookings = (await Bookings.byBorrower(user.id)).length;
   const initials = user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 
   return (

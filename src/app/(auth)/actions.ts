@@ -22,7 +22,7 @@ export async function loginAction(_prev: unknown, formData: FormData) {
     return { error: TOO_MANY };
   }
 
-  const user = Users.byEmail(email);
+  const user = await Users.byEmail(email);
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
     return { error: "Invalid email or password." };
   }
@@ -46,10 +46,10 @@ export async function registerAction(_prev: unknown, formData: FormData) {
   if (password.length < 6) return { error: "Password must be at least 6 characters." };
   if (!accept) return { error: "Please accept the Terms and Privacy settings." };
 
-  const existing = Users.byEmail(email);
+  const existing = await Users.byEmail(email);
   if (existing) return { error: "An account with this email already exists." };
 
-  const user = Users.create({ name, email, passwordHash: await hashPassword(password) });
+  const user = await Users.create({ name, email, passwordHash: await hashPassword(password) });
   createSession(user.id);
   redirect("/dashboard/collection");
 }

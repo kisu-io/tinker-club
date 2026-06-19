@@ -8,10 +8,10 @@ import { deleteTimelineEvent } from "../detail-actions";
 
 export default async function TimelinePage({ params }: { params: { id: string } }) {
   const user = await requireUser();
-  const v = Vehicles.forOwner(params.id, user.id);
+  const v = await Vehicles.forOwner(params.id, user.id);
   if (!v) notFound();
 
-  const events = Timeline.forVehicle(v.id);
+  const events = await Timeline.forVehicle(v.id);
 
   return (
     <div>

@@ -7,8 +7,8 @@ import { Clubs, Memberships } from "@/lib/repo";
 // oracle to confirm a club id exists or to learn its (name-derived) slug.
 export default async function LegacyClubRedirect({ params }: { params: { clubId: string } }) {
   const user = await requireUser();
-  const club = Clubs.byId(params.clubId);
-  const membership = club ? Memberships.of(club.id, user.id) : undefined;
+  const club = await Clubs.byId(params.clubId);
+  const membership = club ? await Memberships.of(club.id, user.id) : undefined;
   if (!club || !membership) notFound();
   redirect(`/g/${club.slug}`);
 }

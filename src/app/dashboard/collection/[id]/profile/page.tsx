@@ -35,12 +35,12 @@ const STAT_LABELS: Record<string, string> = {
 
 export default async function ProfilePage({ params }: { params: { id: string } }) {
   const user = await requireUser();
-  const v = Vehicles.forOwner(params.id, user.id);
+  const v = await Vehicles.forOwner(params.id, user.id);
   if (!v) notFound();
 
   const facts: string[] = v.keyFacts ? JSON.parse(v.keyFacts) : [];
-  const stats = Timeline.stats(v.id);
-  const upcoming = Timeline.upcoming(v.id);
+  const stats = await Timeline.stats(v.id);
+  const upcoming = await Timeline.upcoming(v.id);
 
   return (
     <div className="space-y-8">

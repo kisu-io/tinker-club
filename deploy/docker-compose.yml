@@ -1,5 +1,5 @@
-# Production deploy for a single VPS: the app (one instance, persistent SQLite
-# volume) behind Caddy (automatic HTTPS). See deploy/README.md.
+# Production deploy for a single VPS: the app behind Caddy (automatic HTTPS).
+# The app connects to Supabase Postgres via DATABASE_URL — no local DB volume.
 #
 #   cd deploy && cp .env.example .env   # then edit .env
 #   docker compose up -d --build
@@ -13,12 +13,8 @@ services:
     env_file: .env
     environment:
       - NODE_ENV=production
-    volumes:
-      # Persistent SQLite lives here (DATA_DIR=/data is baked into the image).
-      - app-data:/data
-    # Internal only — not published to the host; Caddy reaches it over the
-    # compose network. Run exactly ONE replica (SQLite single-writer +
-    # in-process rate limiter).
+    # No volumes — database lives in Supabase (Postgres), reached over the
+    # network via DATABASE_URL. Run exactly ONE replica (in-process rate limiter).
     expose:
       - "3000"
     healthcheck:
@@ -44,6 +40,5 @@ services:
       - app
 
 volumes:
-  app-data:
   caddy-data:
   caddy-config:

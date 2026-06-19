@@ -8,10 +8,10 @@ import { deleteGalleryImage } from "../detail-actions";
 
 export default async function GalleryPage({ params }: { params: { id: string } }) {
   const user = await requireUser();
-  const v = Vehicles.forOwner(params.id, user.id);
+  const v = await Vehicles.forOwner(params.id, user.id);
   if (!v) notFound();
 
-  const images = Gallery.forVehicle(v.id);
+  const images = await Gallery.forVehicle(v.id);
 
   return (
     <div>

@@ -22,8 +22,8 @@ export interface GroupContext {
  */
 export async function requireGroupMember(slug: string): Promise<GroupContext> {
   const user = await requireUser();
-  const club = Clubs.bySlug(slug);
-  const membership = club ? Memberships.of(club.id, user.id) : undefined;
+  const club = await Clubs.bySlug(slug);
+  const membership = club ? await Memberships.of(club.id, user.id) : undefined;
   const access = checkGroupAccess(club, membership, user.id);
   if (!access.ok) notFound();
   return { user, club: club!, membership: membership!, isOwner: access.isOwner };

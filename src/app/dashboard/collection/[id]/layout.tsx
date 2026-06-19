@@ -11,7 +11,7 @@ export default async function VehicleLayout({
   params: { id: string };
 }) {
   const user = await requireUser();
-  const vehicle = Vehicles.forOwner(params.id, user.id);
+  const vehicle = await Vehicles.forOwner(params.id, user.id);
   if (!vehicle) notFound();
 
   return (

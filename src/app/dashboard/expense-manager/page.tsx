@@ -8,10 +8,10 @@ import { CATEGORY_COLORS } from "@/lib/constants";
 
 export default async function ExpenseManagerPage() {
   const user = await requireUser();
-  const vehicles = Vehicles.ownedBy(user.id);
-  const totals = categoryTotalsForOwner(user.id);
+  const vehicles = await Vehicles.ownedBy(user.id);
+  const totals = await categoryTotalsForOwner(user.id);
   const grand = totals.reduce((s, t) => s + t.total, 0);
-  const perCar = new Map(vehicleCostTotals(user.id).map((r) => [r.vehicleId, r.total]));
+  const perCar = new Map((await vehicleCostTotals(user.id)).map((r) => [r.vehicleId, r.total]));
   const avgAnnual = vehicles.length ? grand / vehicles.length : 0;
 
   return (
@@ -45,8 +45,8 @@ export default async function ExpenseManagerPage() {
           <div className="card p-10 text-center text-sm text-ink-400">No cars in your collection yet.</div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {vehicles.map((v) => {
-              const cats = categoryTotals(v.id);
+            {await Promise.all(vehicles.map(async (v) => {
+              const cats = await categoryTotals(v.id);
               const total = perCar.get(v.id) ?? 0;
               return (
                 <div key={v.id} className="card overflow-hidden">
@@ -72,7 +72,7 @@ export default async function ExpenseManagerPage() {
                   </div>
                 </div>
               );
-            })}
+            }))}
           </div>
         )}
       </section>

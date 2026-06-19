@@ -89,8 +89,8 @@ export function getSessionUserId(): string | null {
   }
 }
 
-export function getCurrentUser() {
+export async function getCurrentUser() {
   const uid = getSessionUserId();
   if (!uid) return null;
-  return Users.byId(uid) ?? null;
+  return (await Users.byId(uid)) ?? null;
 }

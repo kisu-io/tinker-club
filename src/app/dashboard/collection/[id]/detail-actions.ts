@@ -6,7 +6,7 @@ import { Vehicles, Expenses, Documents, Timeline, Gallery } from "@/lib/repo";
 
 async function ownGuard(vehicleId: string) {
   const user = await requireUser();
-  const v = Vehicles.forOwner(vehicleId, user.id);
+  const v = await Vehicles.forOwner(vehicleId, user.id);
   if (!v) throw new Error("Not found");
   return { user, v };
 }
@@ -16,7 +16,7 @@ export async function addExpense(vehicleId: string, fd: FormData) {
   await ownGuard(vehicleId);
   const amount = parseFloat(String(fd.get("amount") || "0"));
   if (!fd.get("name") || !Number.isFinite(amount)) return;
-  Expenses.create({
+  await Expenses.create({
     vehicleId,
     name: String(fd.get("name")),
     category: String(fd.get("category") || "OTHER"),
@@ -30,7 +30,7 @@ export async function addExpense(vehicleId: string, fd: FormData) {
 }
 export async function deleteExpense(vehicleId: string, expenseId: string) {
   await ownGuard(vehicleId);
-  Expenses.remove(expenseId, vehicleId);
+  await Expenses.remove(expenseId, vehicleId);
   revalidatePath(`/dashboard/collection/${vehicleId}/expenses`);
   revalidatePath(`/dashboard/expense-manager`);
 }
@@ -39,7 +39,7 @@ export async function deleteExpense(vehicleId: string, expenseId: string) {
 export async function addDocument(vehicleId: string, fd: FormData) {
   const { user } = await ownGuard(vehicleId);
   if (!fd.get("name")) return;
-  Documents.create({
+  await Documents.create({
     vehicleId,
     name: String(fd.get("name")),
     category: String(fd.get("category") || "OTHER"),
@@ -51,7 +51,7 @@ export async function addDocument(vehicleId: string, fd: FormData) {
 }
 export async function deleteDocument(vehicleId: string, documentId: string) {
   await ownGuard(vehicleId);
-  Documents.remove(documentId, vehicleId);
+  await Documents.remove(documentId, vehicleId);
   revalidatePath(`/dashboard/collection/${vehicleId}/documents`);
 }
 
@@ -60,7 +60,7 @@ export async function addTimelineEvent(vehicleId: string, fd: FormData) {
   await ownGuard(vehicleId);
   const year = parseInt(String(fd.get("year") || ""), 10);
   if (!fd.get("title") || !Number.isFinite(year)) return;
-  Timeline.create({
+  await Timeline.create({
     vehicleId,
     year,
     title: String(fd.get("title")),
@@ -74,7 +74,7 @@ export async function addTimelineEvent(vehicleId: string, fd: FormData) {
 }
 export async function deleteTimelineEvent(vehicleId: string, eventId: string) {
   await ownGuard(vehicleId);
-  Timeline.remove(eventId, vehicleId);
+  await Timeline.remove(eventId, vehicleId);
   revalidatePath(`/dashboard/collection/${vehicleId}/timeline`);
 }
 
@@ -83,11 +83,11 @@ export async function addGalleryImage(vehicleId: string, fd: FormData) {
   await ownGuard(vehicleId);
   const url = String(fd.get("url") || "");
   if (!url) return;
-  Gallery.create({ vehicleId, url, caption: String(fd.get("caption") || "") || undefined });
+  await Gallery.create({ vehicleId, url, caption: String(fd.get("caption") || "") || undefined });
   revalidatePath(`/dashboard/collection/${vehicleId}/gallery`);
 }
 export async function deleteGalleryImage(vehicleId: string, imageId: string) {
   await ownGuard(vehicleId);
-  Gallery.remove(imageId, vehicleId);
+  await Gallery.remove(imageId, vehicleId);
   revalidatePath(`/dashboard/collection/${vehicleId}/gallery`);
 }

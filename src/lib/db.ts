@@ -1,244 +1,82 @@
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import path from "node:path";
+import postgres from "postgres";
 import crypto from "node:crypto";
 import { slugify } from "./slug";
 
-// Singleton across hot reloads in dev.
-const g = globalThis as unknown as { __mcDb?: DatabaseSync };
+// ---------------------------------------------------------------------------
+// Postgres connection (Supabase or any standard Postgres).
+//
+// DATABASE_URL must be set at runtime (e.g.
+//   postgresql://postgres.xxxx:pass@aws-0-region.pooler.supabase.com:6543/postgres
+// ). Lazy singleton so Next build workers don't open a connection during
+// static analysis.
+// ---------------------------------------------------------------------------
 
-function open(): DatabaseSync {
-  const dir = process.env.DATA_DIR
-    ? path.resolve(process.env.DATA_DIR)
-    : path.join(process.cwd(), "data");
-  fs.mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(path.join(dir, "app.db"));
-  db.exec("PRAGMA busy_timeout = 5000;");
-  db.exec("PRAGMA foreign_keys = ON;");
-  migrate(db);
-  return db;
+type Sql = ReturnType<typeof postgres>;
+
+const g = globalThis as unknown as { __mcDb?: Sql };
+
+function conn(): Sql {
+  if (g.__mcDb) return g.__mcDb;
+
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL is not set. Set it to your Postgres/Supabase connection string.",
+    );
+  }
+
+  // Supabase pooler (transaction mode, port 6543) doesn't support prepared
+  // statements reliably; disable them for pooler-style URLs.
+  const isSupabasePooler = /supabase\.com/.test(url) || /:6543/.test(url);
+  const sql = postgres(url, {
+    max: 10,
+    idle_timeout: 30,
+    connect_timeout: 30,
+    prepare: !isSupabasePooler,
+  });
+
+  // Auto-migrate on first connect (idempotent).
+  void migrate(sql);
+
+  g.__mcDb = sql;
+  return sql;
 }
 
-// Lazy singleton — the connection is only opened on first query, not at import.
-// This keeps Next.js build workers from opening the file during static analysis.
-function conn(): DatabaseSync {
-  return g.__mcDb ?? (g.__mcDb = open());
+async function migrate(sql: Sql) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const schemaPath = path.join(process.cwd(), "scripts", "schema.sql");
+  const ddl = fs.readFileSync(schemaPath, "utf8");
+
+  const statements = ddl
+    .split(/;\s*\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !s.startsWith("--"));
+
+  for (const stmt of statements) {
+    await sql.unsafe(stmt);
+  }
+
+  await backfillClubSlugs(sql);
 }
 
-function migrate(db: DatabaseSync) {
-  db.exec(`
-  CREATE TABLE IF NOT EXISTS User (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    passwordHash TEXT NOT NULL,
-    language TEXT NOT NULL DEFAULT 'en',
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS Vehicle (
-    id TEXT PRIMARY KEY,
-    ownerId TEXT NOT NULL REFERENCES User(id) ON DELETE CASCADE,
-    year INTEGER NOT NULL,
-    make TEXT NOT NULL,
-    model TEXT NOT NULL,
-    imageUrl TEXT,
-    cylinders INTEGER,
-    performanceKw INTEGER,
-    mileageKm INTEGER NOT NULL DEFAULT 0,
-    vin TEXT,
-    color TEXT,
-    description TEXT,
-    visibility TEXT NOT NULL DEFAULT 'PRIVATE',
-    currency TEXT NOT NULL DEFAULT 'EUR',
-    vehicleType TEXT,
-    bodyStyle TEXT,
-    previousOwners INTEGER,
-    unitsProduced INTEGER,
-    transmissionNumber TEXT,
-    location TEXT,
-    gearbox TEXT,
-    driveType TEXT,
-    driversSide TEXT,
-    matchingNumbers INTEGER NOT NULL DEFAULT 0,
-    keyFacts TEXT,
-    overview TEXT,
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS Expense (
-    id TEXT PRIMARY KEY,
-    vehicleId TEXT NOT NULL REFERENCES Vehicle(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'QUICK COST',
-    amount REAL NOT NULL,
-    date TEXT NOT NULL DEFAULT (datetime('now')),
-    notes TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS Document (
-    id TEXT PRIMARY KEY,
-    vehicleId TEXT NOT NULL REFERENCES Vehicle(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'PDF',
-    fileUrl TEXT,
-    uploadedById TEXT REFERENCES User(id),
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS TimelineEvent (
-    id TEXT PRIMARY KEY,
-    vehicleId TEXT NOT NULL REFERENCES Vehicle(id) ON DELETE CASCADE,
-    year INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT,
-    imageUrl TEXT,
-    category TEXT NOT NULL DEFAULT 'HISTORY',
-    eventDate TEXT,
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS GalleryImage (
-    id TEXT PRIMARY KEY,
-    vehicleId TEXT NOT NULL REFERENCES Vehicle(id) ON DELETE CASCADE,
-    url TEXT NOT NULL,
-    caption TEXT,
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS Club (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    ownerId TEXT NOT NULL REFERENCES User(id) ON DELETE CASCADE,
-    inviteCode TEXT UNIQUE NOT NULL,
-    slug TEXT,
-    primaryColor TEXT,
-    accentColor TEXT,
-    logoUrl TEXT,
-    tagline TEXT,
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS ClubMembership (
-    id TEXT PRIMARY KEY,
-    clubId TEXT NOT NULL REFERENCES Club(id) ON DELETE CASCADE,
-    userId TEXT NOT NULL REFERENCES User(id) ON DELETE CASCADE,
-    role TEXT NOT NULL DEFAULT 'MEMBER',
-    joinedAt TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(clubId, userId)
-  );
-
-  CREATE TABLE IF NOT EXISTS VehicleShare (
-    id TEXT PRIMARY KEY,
-    vehicleId TEXT NOT NULL REFERENCES Vehicle(id) ON DELETE CASCADE,
-    clubId TEXT NOT NULL REFERENCES Club(id) ON DELETE CASCADE,
-    requireApproval INTEGER NOT NULL DEFAULT 1,
-    notes TEXT,
-    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(vehicleId, clubId)
-  );
-
-  CREATE TABLE IF NOT EXISTS Booking (
-    id TEXT PRIMARY KEY,
-    vehicleId TEXT NOT NULL REFERENCES Vehicle(id) ON DELETE CASCADE,
-    borrowerId TEXT NOT NULL REFERENCES User(id) ON DELETE CASCADE,
-    startDate TEXT NOT NULL,
-    endDate TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    purpose TEXT,
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS HandoverLog (
-    id TEXT PRIMARY KEY,
-    bookingId TEXT UNIQUE NOT NULL REFERENCES Booking(id) ON DELETE CASCADE,
-    pickupMileageKm INTEGER,
-    returnMileageKm INTEGER,
-    pickupFuelPct INTEGER,
-    returnFuelPct INTEGER,
-    conditionNotes TEXT,
-    damageReported INTEGER NOT NULL DEFAULT 0,
-    checklistJson TEXT,
-    pickedUpAt TEXT,
-    returnedAt TEXT,
-    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  `);
-
-  // Upgrade existing databases that pre-date newer columns.
-  ensureColumns(db, "Vehicle", {
-    vehicleType: "TEXT",
-    bodyStyle: "TEXT",
-    previousOwners: "INTEGER",
-    unitsProduced: "INTEGER",
-    transmissionNumber: "TEXT",
-    location: "TEXT",
-    gearbox: "TEXT",
-    driveType: "TEXT",
-    driversSide: "TEXT",
-    matchingNumbers: "INTEGER NOT NULL DEFAULT 0",
-    keyFacts: "TEXT",
-    overview: "TEXT",
-  });
-  ensureColumns(db, "TimelineEvent", {
-    category: "TEXT NOT NULL DEFAULT 'HISTORY'",
-    eventDate: "TEXT",
-  });
-  ensureColumns(db, "Club", {
-    slug: "TEXT",
-    primaryColor: "TEXT",
-    accentColor: "TEXT",
-    logoUrl: "TEXT",
-    tagline: "TEXT",
-  });
-  backfillClubSlugs(db);
-  // Unique index (not a column constraint) so backfill can run first and so
-  // SQLite tolerates pre-existing NULLs during the upgrade window.
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_club_slug ON Club(slug);");
-}
-
-function backfillClubSlugs(db: DatabaseSync) {
-  const rows = db
-    .prepare("SELECT id, name FROM Club WHERE slug IS NULL OR slug = ''")
-    .all() as { id: string; name: string }[];
+async function backfillClubSlugs(sql: Sql) {
+  const rows = (await sql`SELECT id, name FROM "Club" WHERE slug IS NULL OR slug = ''`) as unknown as { id: string; name: string }[];
   if (!rows.length) return;
 
   const taken = new Set(
-    (db.prepare("SELECT slug FROM Club WHERE slug IS NOT NULL AND slug <> ''").all() as { slug: string }[])
-      .map((r) => r.slug),
+    (
+      (await sql`SELECT slug FROM "Club" WHERE slug IS NOT NULL AND slug <> ''`) as unknown as { slug: string }[]
+    ).map((r) => r.slug),
   );
 
-  const update = db.prepare("UPDATE Club SET slug = ? WHERE id = ?");
-  // Atomic: a crash mid-backfill must not leave some clubs with NULL slugs
-  // (which would make them unreachable via Clubs.bySlug / /g/[slug]).
-  db.exec("BEGIN");
-  try {
-    for (const r of rows) {
-      const base = slugify(r.name);
-      let candidate = base;
-      let i = 2;
-      while (taken.has(candidate)) candidate = `${base}-${i++}`;
-      taken.add(candidate);
-      update.run(candidate, r.id);
-    }
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
-}
-
-function ensureColumns(db: DatabaseSync, table: string, columns: Record<string, string>) {
-  const existing = new Set(
-    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name)
-  );
-  for (const [name, def] of Object.entries(columns)) {
-    if (!existing.has(name)) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def};`);
-    }
+  for (const r of rows) {
+    const base = slugify(r.name);
+    let candidate = base;
+    let i = 2;
+    while (taken.has(candidate)) candidate = `${base}-${i++}`;
+    taken.add(candidate);
+    await sql`UPDATE "Club" SET slug = ${candidate} WHERE id = ${r.id}`;
   }
 }
 
@@ -246,21 +84,40 @@ export function id(): string {
   return crypto.randomUUID();
 }
 
-// node:sqlite returns rows with a null prototype, which Next.js refuses to
-// serialize across the Server → Client Component boundary. Re-wrap into a
-// plain object so every consumer is safe by default.
-function plain<T>(row: unknown): T {
-  return { ...(row as object) } as T;
+// ---------------------------------------------------------------------------
+// Helpers — ergonomic typed queries. We translate SQLite-style `?`
+// placeholders into Postgres `$1, $2, ...` and use sql.unsafe() so repo.ts
+// doesn't need to change its SQL strings.
+//
+// Usage:
+//   get<User>('SELECT * FROM "User" WHERE id = ?', uid)
+//   all<Vehicle>('SELECT * FROM "Vehicle" WHERE "ownerId" = ?', uid)
+//   run('INSERT INTO "User" (id, name) VALUES (?,?)', uid, name)
+// ---------------------------------------------------------------------------
+
+function convertPlaceholders(sqlText: string): string {
+  let i = 0;
+  return sqlText.replace(/\?/g, () => `$${++i}`);
 }
 
-// Small helpers for ergonomic typed queries. The connection opens lazily here.
-export function get<T = unknown>(sql: string, ...params: unknown[]): T | undefined {
-  const row = conn().prepare(sql).get(...params);
-  return row == null ? undefined : plain<T>(row);
+export async function get<T = unknown>(sqlText: string, ...params: unknown[]): Promise<T | undefined> {
+  const sql = conn();
+  const rows = await (sql.unsafe as any)(convertPlaceholders(sqlText), params);
+  if (!Array.isArray(rows) || !rows.length) return undefined;
+  return rows[0] as T;
 }
-export function all<T = unknown>(sql: string, ...params: unknown[]): T[] {
-  return (conn().prepare(sql).all(...params) as unknown[]).map((r) => plain<T>(r));
+
+export async function all<T = unknown>(sqlText: string, ...params: unknown[]): Promise<T[]> {
+  const sql = conn();
+  const rows = await (sql.unsafe as any)(convertPlaceholders(sqlText), params);
+  return rows as T[];
 }
-export function run(sql: string, ...params: unknown[]) {
-  return conn().prepare(sql).run(...params);
+
+export async function run(sqlText: string, ...params: unknown[]): Promise<void> {
+  const sql = conn();
+  await (sql.unsafe as any)(convertPlaceholders(sqlText), params);
+}
+
+export function plain<T>(row: unknown): T {
+  return { ...(row as object) } as T;
 }

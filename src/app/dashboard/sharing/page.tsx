@@ -10,10 +10,10 @@ import { ChevronRight } from "@/components/icons";
 
 export default async function SharingPage() {
   const user = await requireUser();
-  const clubs = Clubs.forUser(user.id);
-  const bookable = Shares.bookableFor(user.id);
-  const myBookings = Bookings.byBorrower(user.id);
-  const incoming = Bookings.incomingFor(user.id).filter((b) => b.status === "PENDING");
+  const clubs = await Clubs.forUser(user.id);
+  const bookable = await Shares.bookableFor(user.id);
+  const myBookings = await Bookings.byBorrower(user.id);
+  const incoming = (await Bookings.incomingFor(user.id)).filter((b) => b.status === "PENDING");
 
   return (
     <div className="space-y-8">
