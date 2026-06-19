@@ -1,9 +1,13 @@
 # Caddy reverse proxy with automatic HTTPS.
 # {$DOMAIN} and {$ACME_EMAIL} come from deploy/.env (via env_file).
 #
-# Real deploy: DOMAIN=cars.example.com (A/AAAA record -> this VPS) — Caddy gets
-#   a Let's Encrypt cert automatically on first request.
-# Local test without a domain: set DOMAIN=:80 in .env (plain HTTP, no cert).
+# Real deploy with a domain: DOMAIN=cars.example.com — Caddy gets a Let's Encrypt
+# cert automatically. For local HTTP-only testing: DOMAIN=:80.
+#
+# NOTE: docker-compose.yml maps 8080:80 and 8443:443, so the host ports are
+# 8080 (HTTP) and 8443 (HTTPS). When you get a real domain, either move Caddy
+# back to 80/443 (edit docker-compose.yml) or put a reverse proxy (nginx) in
+# front that forwards 80/443 → 8080/8443.
 
 {
 	# Email for Let's Encrypt notices (unused when DOMAIN is :80 / HTTP-only).

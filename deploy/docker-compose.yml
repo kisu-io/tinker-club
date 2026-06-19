@@ -30,8 +30,8 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:80"
+      - "8443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data      # ACME certs / account keys — keep this volume
