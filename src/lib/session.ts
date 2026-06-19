@@ -8,6 +8,10 @@ const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
 const rawSecret = process.env.SESSION_SECRET?.trim() ?? "";
 const isProd = process.env.NODE_ENV === "production";
+// Secure cookie flag should only be set when actually serving over HTTPS.
+// On a bare-IP HTTP deployment (no domain/TLS yet), browsers silently drop
+// Secure cookies, which breaks login with no visible error.
+const isHTTPS = process.env.COOKIE_SECURE === "true" || isProd && process.env.COOKIE_SECURE !== "false";
 
 // Reject obviously-not-real secrets: the dev fallback, anything too short to
 // resist brute force, and common placeholder phrases that ship in templates.
@@ -66,7 +70,7 @@ export function createSession(userId: string) {
   cookies().set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: isProd,
+    secure: isHTTPS,
     path: "/",
     maxAge: MAX_AGE,
   });
