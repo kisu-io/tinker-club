@@ -24,15 +24,30 @@ function connect(): Sql {
     );
   }
 
-  // Supabase pooler (transaction mode, port 6543) doesn't support prepared
-  // statements reliably; disable them for pooler-style URLs.
-  const isSupabasePooler = /supabase\.com/.test(url) || /:6543/.test(url);
-  return postgres(url, {
-    max: 10,
-    idle_timeout: 30,
+  // Prepared statements are always off: transaction-mode poolers (Supabase,
+  // Neon, PgBouncer) without prepared-statement support hang the client.
+  return postgres(normalizeUrl(url), {
+    max: 5,
+    idle_timeout: 20,
     connect_timeout: 30,
-    prepare: !isSupabasePooler,
+    prepare: false,
+    onnotice: (notice) => {
+      // Drop routine NOTICEs (e.g. "relation ... already exists, skipping"
+      // from every migrate() run); keep warnings.
+      if (notice.severity !== "NOTICE") console.warn(notice);
+    },
   });
+}
+
+/**
+ * postgres.js forwards unknown URL query params as server startup parameters.
+ * Neon's default `channel_binding=require` is rejected by Postgres and
+ * PgBouncer, so strip it.
+ */
+export function normalizeUrl(url: string): string {
+  const parsed = new URL(url);
+  parsed.searchParams.delete("channel_binding");
+  return parsed.toString();
 }
 
 /**
@@ -44,7 +59,15 @@ export function conn(): Promise<Sql> {
   if (!g.__mcDbReady) {
     g.__mcDbReady = (async () => {
       const sql = connect();
-      await migrate(sql);
+      try {
+        await migrate(sql);
+      } catch (err) {
+        // Don't cache the failure: a transient error (e.g. Neon waking from
+        // scale-to-zero) would otherwise poison this instance for its life.
+        g.__mcDbReady = undefined;
+        await sql.end({ timeout: 1 }).catch(() => {});
+        throw err;
+      }
       g.__mcDb = sql;
       return sql;
     })();
