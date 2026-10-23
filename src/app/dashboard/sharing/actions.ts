@@ -4,8 +4,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import {
-  Clubs, Memberships, Vehicles, Bookings, Handovers, Shares,
+  Clubs, Memberships, Vehicles, Bookings, Shares,
   shareVehicleAtomic, unshareVehicleAtomic, requestBookingAtomic,
+  leaveClubAtomic, cancelBookingAtomic, saveHandoverAtomic,
 } from "@/lib/repo";
 import type { BookingStatus } from "@/lib/types";
 
@@ -59,7 +60,7 @@ export async function leaveClub(clubId: string) {
   const user = await requireUser();
   const club = await Clubs.byId(clubId);
   if (!club || club.ownerId === user.id) return; // owner can't leave
-  await Memberships.remove(clubId, user.id);
+  await leaveClubAtomic(clubId, user.id);
   revalidatePath("/dashboard/sharing");
   redirect("/dashboard/sharing");
 }
@@ -107,20 +108,18 @@ export async function requestBooking(fd: FormData) {
   const access = await Shares.isBookableBy(vehicleId, user.id);
   if (!access) return { error: "This car isn't shared with any of your clubs." };
 
-  const status = access.requireApproval ? "PENDING" : "APPROVED";
   const purpose = String(fd.get("purpose") || "").trim() || undefined;
   const result = await requestBookingAtomic({
     vehicleId,
     borrowerId: user.id,
     startDate,
     endDate,
-    status,
     purpose,
   });
   if (result.error) return { error: result.error };
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${vehicleId}/share`);
-  return { ok: true, status };
+  return { ok: true, status: result.status };
 }
 
 export async function decideBooking(bookingId: string, decision: "APPROVED" | "DECLINED") {
@@ -131,7 +130,7 @@ export async function decideBooking(bookingId: string, decision: "APPROVED" | "D
   if (!vehicle) return;
   // State machine: only PENDING bookings can be approved/declined.
   if (booking.status !== "PENDING") return;
-  await Bookings.setStatus(bookingId, decision);
+  await Bookings.transition(bookingId, "PENDING", decision);
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${booking.vehicleId}/share`);
 }
@@ -140,12 +139,9 @@ export async function cancelBooking(bookingId: string) {
   const user = await requireUser();
   const booking = await Bookings.byId(bookingId);
   if (!booking) return;
-  // State machine: can't cancel a completed or already-cancelled booking.
-  if (booking.status === "COMPLETED" || booking.status === "CANCELLED") return;
-  const isBorrower = booking.borrowerId === user.id;
-  const isOwner = !!(await Vehicles.forOwner(booking.vehicleId, user.id));
-  if (!isBorrower && !isOwner) return;
-  await Bookings.setStatus(bookingId, "CANCELLED");
+  // State machine (closed, picked up) and owner/borrower checks live in cancelBookingAtomic.
+  const result = await cancelBookingAtomic(bookingId, user.id);
+  if (!result.ok) return result;
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${booking.vehicleId}/share`);
 }
@@ -158,7 +154,7 @@ export async function completeBooking(bookingId: string) {
   if (booking.status !== "APPROVED") return;
   const isOwner = !!(await Vehicles.forOwner(booking.vehicleId, user.id));
   if (!isOwner && booking.borrowerId !== user.id) return;
-  await Bookings.setStatus(bookingId, "COMPLETED");
+  await Bookings.transition(bookingId, "APPROVED", "COMPLETED");
   revalidatePath("/dashboard/sharing");
 }
 
@@ -170,11 +166,6 @@ function intOrNull(fd: FormData, k: string): number | null {
 
 export async function saveHandover(bookingId: string, phase: "pickup" | "return", fd: FormData) {
   const user = await requireUser();
-  const booking = await Bookings.byId(bookingId);
-  if (!booking) return;
-  const isOwner = !!(await Vehicles.forOwner(booking.vehicleId, user.id));
-  if (!isOwner && booking.borrowerId !== user.id) return;
-
   const checklist = fd.getAll("checklist").map((c) => String(c));
   const data =
     phase === "pickup"
@@ -192,12 +183,9 @@ export async function saveHandover(bookingId: string, phase: "pickup" | "return"
           conditionNotes: String(fd.get("notes") || "") || undefined,
           returnedAt: new Date().toISOString(),
         };
-  await Handovers.upsert(bookingId, data);
-
-  // Returning the car completes the booking (only if APPROVED).
-  if (phase === "return" && booking.status === "APPROVED") {
-    await Bookings.setStatus(bookingId, "COMPLETED");
-  }
+  // Owner/borrower and status guards live in saveHandoverAtomic; a return completes the booking.
+  const result = await saveHandoverAtomic(bookingId, user.id, phase, data);
+  if (!result.ok) return result;
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/sharing/booking/${bookingId}`);
 }

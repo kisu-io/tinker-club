@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { SubmitButton } from "@/components/SubmitButton";
 import { saveHandover } from "../../actions";
@@ -16,8 +17,10 @@ export function HandoverForm({
   done: boolean;
 }) {
   const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
   async function action(fd: FormData) {
-    await saveHandover(bookingId, phase, fd);
+    const res = await saveHandover(bookingId, phase, fd);
+    setError(res?.error ?? null);
     router.refresh();
   }
 
@@ -52,6 +55,7 @@ export function HandoverForm({
         <label className="label">Notes</label>
         <textarea name="notes" className="input min-h-[70px]" placeholder="Condition, observations…" />
       </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
       <SubmitButton className="btn-primary" pendingText="Saving…">
         {phase === "pickup" ? "Confirm pickup" : "Confirm return"}
       </SubmitButton>

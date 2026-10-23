@@ -226,12 +226,44 @@ export const Shares = {
        JOIN "ClubMembership" m ON m."clubId" = c.id AND m."userId" = ?
        WHERE v."ownerId" != ?
        ORDER BY v.make, v.model`, uid, uid),
+  // Instant (0) if any of the user's clubs sharing the car grants instant booking.
   isBookableBy: async (vehicleId: string, uid: string) =>
     get<{ requireApproval: number }>(
-      `SELECT s."requireApproval" FROM "VehicleShare" s
+      `SELECT MIN(s."requireApproval") AS "requireApproval" FROM "VehicleShare" s
        JOIN "ClubMembership" m ON m."clubId" = s."clubId" AND m."userId" = ?
-       WHERE s."vehicleId" = ? LIMIT 1`, uid, vehicleId),
+       WHERE s."vehicleId" = ? HAVING COUNT(*) > 0`, uid, vehicleId),
 };
+
+/** The earliest calendar date that is "today" anywhere (UTC-12), so no timezone sees its own today as past. */
+export function earliestToday(): string {
+  return new Date(Date.now() - 12 * 3600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Cancel future, not-yet-picked-up PENDING/APPROVED bookings whose borrower no longer reaches the
+ * car through any club share. `scope` narrows to one vehicle or one borrower.
+ */
+async function cancelOrphanedBookings(sql: Sql, scope: { vehicleId: string } | { borrowerId: string }) {
+  const where = "vehicleId" in scope ? sql`b."vehicleId" = ${scope.vehicleId}` : sql`b."borrowerId" = ${scope.borrowerId}`;
+  await sql`UPDATE "Booking" b SET status = 'CANCELLED'
+    WHERE ${where}
+      AND b.status IN ('PENDING','APPROVED')
+      AND b."startDate"::date >= ${earliestToday()}::date
+      AND NOT EXISTS (SELECT 1 FROM "HandoverLog" h WHERE h."bookingId" = b.id AND h."pickedUpAt" IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM "VehicleShare" s
+        JOIN "ClubMembership" m ON m."clubId" = s."clubId" AND m."userId" = b."borrowerId"
+        WHERE s."vehicleId" = b."vehicleId")`;
+}
+
+/** Leave a club (the OWNER membership is never removed) and drop bookings that lost access. */
+export async function leaveClubAtomic(clubId: string, userId: string): Promise<void> {
+  await tx(async (sql) => {
+    await sql`SELECT 1 FROM "Vehicle" WHERE id IN (SELECT "vehicleId" FROM "VehicleShare" WHERE "clubId" = ${clubId})
+      ORDER BY id FOR UPDATE`; // serialize with requestBookingAtomic
+    await sql`DELETE FROM "ClubMembership" WHERE "clubId" = ${clubId} AND "userId" = ${userId} AND role != 'OWNER'`;
+    await cancelOrphanedBookings(sql, { borrowerId: userId });
+  });
+}
 
 /** Atomic share + visibility flip. If the car is PRIVATE, sets it to CLUB. */
 export async function shareVehicleAtomic(vehicleId: string, clubId: string, requireApproval: boolean): Promise<void> {
@@ -242,13 +274,15 @@ export async function shareVehicleAtomic(vehicleId: string, clubId: string, requ
   });
 }
 
-/** Atomic unshare + visibility flip back to PRIVATE when no shares remain. */
+/** Atomic unshare + visibility flip back to PRIVATE when no shares remain + drop bookings that lost access. */
 export async function unshareVehicleAtomic(vehicleId: string, clubId: string): Promise<void> {
   await tx(async (sql) => {
+    await sql`SELECT 1 FROM "Vehicle" WHERE id = ${vehicleId} FOR UPDATE`; // serialize with requestBookingAtomic
     await sql`DELETE FROM "VehicleShare" WHERE "vehicleId" = ${vehicleId} AND "clubId" = ${clubId}`;
     await sql`UPDATE "Vehicle" SET visibility = 'PRIVATE'
       WHERE id = ${vehicleId} AND visibility = 'CLUB'
       AND NOT EXISTS (SELECT 1 FROM "VehicleShare" WHERE "vehicleId" = ${vehicleId})`;
+    await cancelOrphanedBookings(sql, { vehicleId });
   });
 }
 
@@ -316,22 +350,33 @@ export const Bookings = {
       bid, d.vehicleId, d.borrowerId, d.startDate, d.endDate, d.status, d.purpose ?? null);
     return bid;
   },
-  setStatus: async (bid: string, status: string) => run('UPDATE "Booking" SET status=? WHERE id=?', status, bid),
+  transition: async (bid: string, from: string, to: string) =>
+    run('UPDATE "Booking" SET status=? WHERE id=? AND status=?', to, bid, from),
 };
 
 /**
- * Atomic booking request: overlap check + insert in one transaction.
- * Returns { error } on clash, or { bid } on success.
+ * Atomic booking request: access check + overlap check + insert in one transaction.
+ * The Vehicle row lock serializes concurrent requests for the same car (so two overlapping
+ * requests can't both pass at READ COMMITTED) and with unshare/leave-club, so access and the
+ * PENDING/APPROVED status (instant if any of the borrower's clubs is instant) are decided under it.
+ * Returns { error } on lost access, clash or past start date, or { bid, status } on success.
  */
 export async function requestBookingAtomic(d: {
   vehicleId: string;
   borrowerId: string;
   startDate: string;
   endDate: string;
-  status: string;
   purpose?: string;
-}): Promise<{ error?: string; bid?: string }> {
+}): Promise<{ error?: string; bid?: string; status?: string }> {
+  if (d.startDate < earliestToday()) return { error: "Start date can't be in the past." };
   const result = await tx(async (sql) => {
+    await sql`SELECT 1 FROM "Vehicle" WHERE id = ${d.vehicleId} FOR UPDATE`;
+    const [access] = await sql`SELECT MIN(s."requireApproval") AS "requireApproval" FROM "VehicleShare" s
+      JOIN "ClubMembership" m ON m."clubId" = s."clubId" AND m."userId" = ${d.borrowerId}
+      JOIN "Vehicle" v ON v.id = s."vehicleId" AND v."ownerId" != ${d.borrowerId}
+      WHERE s."vehicleId" = ${d.vehicleId}`;
+    if (access.requireApproval === null) return { error: "This car isn't shared with any of your clubs." };
+    const status = access.requireApproval ? "PENDING" : "APPROVED";
     const clashes = await sql`SELECT 1 FROM "Booking"
       WHERE "vehicleId" = ${d.vehicleId}
         AND status IN ('PENDING','APPROVED')
@@ -341,10 +386,10 @@ export async function requestBookingAtomic(d: {
     if (clashes.length) return { error: "Those dates overlap an existing booking." };
     const bid = id();
     await sql`INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", status, purpose)
-      VALUES (${bid}, ${d.vehicleId}, ${d.borrowerId}, ${d.startDate}, ${d.endDate}, ${d.status}, ${d.purpose ?? null})`;
-    return { bid };
+      VALUES (${bid}, ${d.vehicleId}, ${d.borrowerId}, ${d.startDate}, ${d.endDate}, ${status}, ${d.purpose ?? null})`;
+    return { bid, status };
   });
-  return result as { error?: string; bid?: string };
+  return result as { error?: string; bid?: string; status?: string };
 }
 
 /* ---------------- Handover ---------------- */
@@ -353,30 +398,74 @@ export const Handovers = {
   /**
    * Upsert a handover log for a booking. Uses ON CONFLICT to avoid the
    * read-then-write TOCTOU race. Partial updates preserve existing fields
-   * via COALESCE(existing, new).
+   * via COALESCE(existing, new); damageReported uses GREATEST so it is never cleared.
    */
-  async upsert(bid: string, d: Partial<HandoverLog>) {
+  async upsert(bid: string, d: Partial<HandoverLog>, sql?: Sql) {
     const hid = id();
-    await run(
+    const q = sql ?? (await conn());
+    await q.unsafe(
       `INSERT INTO "HandoverLog" (id, "bookingId", "pickupMileageKm", "returnMileageKm", "pickupFuelPct", "returnFuelPct",
        "conditionNotes", "damageReported", "checklistJson", "pickedUpAt", "returnedAt")
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT ("bookingId") DO UPDATE SET
         "pickupMileageKm" = COALESCE(EXCLUDED."pickupMileageKm", "HandoverLog"."pickupMileageKm"),
         "returnMileageKm" = COALESCE(EXCLUDED."returnMileageKm", "HandoverLog"."returnMileageKm"),
         "pickupFuelPct" = COALESCE(EXCLUDED."pickupFuelPct", "HandoverLog"."pickupFuelPct"),
         "returnFuelPct" = COALESCE(EXCLUDED."returnFuelPct", "HandoverLog"."returnFuelPct"),
         "conditionNotes" = COALESCE(EXCLUDED."conditionNotes", "HandoverLog"."conditionNotes"),
-        "damageReported" = COALESCE(EXCLUDED."damageReported", "HandoverLog"."damageReported"),
+        "damageReported" = GREATEST(EXCLUDED."damageReported", "HandoverLog"."damageReported"), -- a reported damage flag is never cleared
         "checklistJson" = COALESCE(EXCLUDED."checklistJson", "HandoverLog"."checklistJson"),
         "pickedUpAt" = COALESCE(EXCLUDED."pickedUpAt", "HandoverLog"."pickedUpAt"),
         "returnedAt" = COALESCE(EXCLUDED."returnedAt", "HandoverLog"."returnedAt"),
         "updatedAt" = now()`,
-      hid, bid, d.pickupMileageKm ?? null, d.returnMileageKm ?? null, d.pickupFuelPct ?? null, d.returnFuelPct ?? null,
-      d.conditionNotes ?? null, d.damageReported ?? 0, d.checklistJson ?? null, d.pickedUpAt ?? null, d.returnedAt ?? null
+      [hid, bid, d.pickupMileageKm ?? null, d.returnMileageKm ?? null, d.pickupFuelPct ?? null, d.returnFuelPct ?? null,
+      d.conditionNotes ?? null, d.damageReported ?? 0, d.checklistJson ?? null, d.pickedUpAt ?? null, d.returnedAt ?? null]
     );
   },
 };
+
+type GuardResult = { ok: true } | { ok: false; error: string };
+
+/** Lock a booking and return it with owner and pickup facts, or undefined if the user isn't owner or borrower. */
+async function lockBookingFor(sql: Sql, bookingId: string, userId: string) {
+  const [row] = await sql<{ status: string; isOwner: boolean; pickedUp: boolean }[]>`
+    SELECT b.status, v."ownerId" = ${userId} AS "isOwner",
+      EXISTS (SELECT 1 FROM "HandoverLog" h WHERE h."bookingId" = b.id AND h."pickedUpAt" IS NOT NULL) AS "pickedUp"
+    FROM "Booking" b JOIN "Vehicle" v ON v.id = b."vehicleId"
+    WHERE b.id = ${bookingId} AND (v."ownerId" = ${userId} OR b."borrowerId" = ${userId})
+    FOR UPDATE OF b`;
+  return row;
+}
+
+/** Owner or borrower cancel. Refused once finished or once the car is picked up (owner completes instead). */
+export async function cancelBookingAtomic(bookingId: string, userId: string): Promise<GuardResult> {
+  return tx(async (sql): Promise<GuardResult> => {
+    const b = await lockBookingFor(sql, bookingId, userId);
+    if (!b) return { ok: false, error: "Booking not found." };
+    if (b.status === "COMPLETED" || b.status === "CANCELLED") return { ok: false, error: "This booking is already closed." };
+    if (b.pickedUp) return { ok: false, error: "The car has been picked up. Complete the booking instead." };
+    await sql`UPDATE "Booking" SET status = 'CANCELLED' WHERE id = ${bookingId}`;
+    return { ok: true };
+  });
+}
+
+/** Pickup only when APPROVED; return only when APPROVED and picked up, which completes the booking. */
+export async function saveHandoverAtomic(
+  bookingId: string,
+  userId: string,
+  phase: "pickup" | "return",
+  data: Partial<HandoverLog>,
+): Promise<GuardResult> {
+  return tx(async (sql): Promise<GuardResult> => {
+    const b = await lockBookingFor(sql, bookingId, userId);
+    if (!b) return { ok: false, error: "Booking not found." };
+    if (b.status !== "APPROVED") return { ok: false, error: "Handover is only possible for an approved booking." };
+    if (phase === "return" && !b.pickedUp) return { ok: false, error: "Log the pickup before the return." };
+    await Handovers.upsert(bookingId, data, sql);
+    if (phase === "return") await sql`UPDATE "Booking" SET status = 'COMPLETED' WHERE id = ${bookingId}`;
+    return { ok: true };
+  });
+}
 
 /* ---------------- Aggregates ---------------- */
 export async function categoryTotals(vehicleId: string) {
