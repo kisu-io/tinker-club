@@ -36,3 +36,5 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
       - run: npm run build
+        env:
+          NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ${{ github.workspace }}/.github/ci/google-fonts-mock.js
