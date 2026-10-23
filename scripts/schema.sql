@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS "Booking" (
   purpose TEXT,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS "idx_booking_vehicle_start" ON "Booking"("vehicleId", "startDate");
+CREATE INDEX IF NOT EXISTS "idx_booking_borrower" ON "Booking"("borrowerId");
 
 CREATE TABLE IF NOT EXISTS "HandoverLog" (
   id TEXT PRIMARY KEY,
