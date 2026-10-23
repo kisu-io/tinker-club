@@ -6,9 +6,9 @@ import { requireUser } from "@/lib/auth";
 import {
   Clubs, Memberships, Vehicles, Bookings, Shares,
   shareVehicleAtomic, unshareVehicleAtomic, requestBookingAtomic,
-  leaveClubAtomic, cancelBookingAtomic, saveHandoverAtomic,
+  leaveClubAtomic, cancelBookingAtomic, saveHandoverAtomic, addBlockAtomic, Blocks,
 } from "@/lib/repo";
-import type { BookingStatus } from "@/lib/types";
+import { isHalf, isValidRange, type SlotRange } from "@/lib/slots";
 
 // Branding inputs are user-supplied; validate before storing so they can't be
 // abused (CSS-property injection via color, tracking/non-https logo URLs).
@@ -93,14 +93,26 @@ export async function unshareVehicle(vehicleId: string, clubId: string) {
 /* ---------------- Bookings ---------------- */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Parse startDate/startHalf/endDate/endHalf form fields (halves default to a whole-day AM -> PM range). */
+function parseRange(fd: FormData): { range: SlotRange } | { error: string } {
+  const startDate = String(fd.get("startDate") || "");
+  const endDate = String(fd.get("endDate") || "");
+  const startHalf = fd.get("startHalf") ?? "AM";
+  const endHalf = fd.get("endHalf") ?? "PM";
+  if (!startDate || !endDate) return { error: "Pick both dates." };
+  if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate) || Number.isNaN(Date.parse(startDate)) || Number.isNaN(Date.parse(endDate)))
+    return { error: "Dates must be YYYY-MM-DD." };
+  if (!isHalf(startHalf) || !isHalf(endHalf)) return { error: "Pick morning or afternoon." };
+  const range = { startDate, startHalf, endDate, endHalf };
+  if (!isValidRange(range)) return { error: "The end must be after the start." };
+  return { range };
+}
+
 export async function requestBooking(fd: FormData) {
   const user = await requireUser();
   const vehicleId = String(fd.get("vehicleId"));
-  const startDate = String(fd.get("startDate"));
-  const endDate = String(fd.get("endDate"));
-  if (!startDate || !endDate) return { error: "Pick both dates." };
-  if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) return { error: "Dates must be YYYY-MM-DD." };
-  if (new Date(endDate) < new Date(startDate)) return { error: "End date must be after start date." };
+  const parsed = parseRange(fd);
+  if ("error" in parsed) return { error: parsed.error };
 
   const vehicle = await Vehicles.byId(vehicleId);
   if (!vehicle || vehicle.ownerId === user.id) return { error: "You can't book your own car." };
@@ -112,11 +124,10 @@ export async function requestBooking(fd: FormData) {
   const result = await requestBookingAtomic({
     vehicleId,
     borrowerId: user.id,
-    startDate,
-    endDate,
+    ...parsed.range,
     purpose,
   });
-  if (result.error) return { error: result.error };
+  if (result.error) return { error: result.error, nextFree: result.nextFree };
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${vehicleId}/share`);
   return { ok: true, status: result.status };
@@ -128,9 +139,8 @@ export async function decideBooking(bookingId: string, decision: "APPROVED" | "D
   if (!booking) return;
   const vehicle = await Vehicles.forOwner(booking.vehicleId, user.id); // only owner decides
   if (!vehicle) return;
-  // State machine: only PENDING bookings can be approved/declined.
-  if (booking.status !== "PENDING") return;
-  await Bookings.transition(bookingId, "PENDING", decision);
+  // State machine: only PENDING, not yet expired, bookings can be approved/declined.
+  if (!(await Bookings.decide(bookingId, decision))) return { error: "This request is no longer pending." };
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${booking.vehicleId}/share`);
 }
@@ -188,4 +198,24 @@ export async function saveHandover(bookingId: string, phase: "pickup" | "return"
   if (!result.ok) return result;
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/sharing/booking/${bookingId}`);
+}
+
+/* ---------------- Owner blocks ---------------- */
+export async function addBlock(fd: FormData) {
+  const user = await requireUser();
+  const vehicleId = String(fd.get("vehicleId"));
+  const parsed = parseRange(fd);
+  if ("error" in parsed) return { error: parsed.error };
+  const reason = String(fd.get("reason") || "").trim().slice(0, 120) || undefined;
+  // Ownership, overlap with bookings/blocks and past dates are checked under the Vehicle lock.
+  const result = await addBlockAtomic({ vehicleId, ownerId: user.id, ...parsed.range, reason });
+  if (!result.ok) return { error: result.error, bookingId: result.bookingId };
+  revalidatePath(`/dashboard/collection/${vehicleId}/share`);
+  return { ok: true };
+}
+
+export async function removeBlock(blockId: string) {
+  const user = await requireUser();
+  const vehicleId = await Blocks.remove(blockId, user.id);
+  if (vehicleId) revalidatePath(`/dashboard/collection/${vehicleId}/share`);
 }

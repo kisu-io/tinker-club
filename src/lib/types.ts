@@ -1,5 +1,8 @@
 export type Visibility = "PRIVATE" | "CLUB" | "PUBLIC";
-export type BookingStatus = "PENDING" | "APPROVED" | "DECLINED" | "CANCELLED" | "COMPLETED";
+import type { Half } from "./slots";
+
+// EXPIRED: a PENDING request left unanswered for 48h or whose start date passed (set lazily).
+export type BookingStatus = "PENDING" | "APPROVED" | "DECLINED" | "CANCELLED" | "COMPLETED" | "EXPIRED";
 export type MemberRole = "OWNER" | "ADMIN" | "MEMBER";
 export type TimelineCategory = "SERVICE" | "RESTORATION" | "ADMIN" | "HISTORY";
 
@@ -121,8 +124,21 @@ export interface Booking {
   borrowerId: string;
   startDate: string;
   endDate: string;
+  startHalf: Half;
+  endHalf: Half;
   status: BookingStatus;
   purpose: string | null;
+  createdAt: string;
+}
+
+export interface VehicleBlock {
+  id: string;
+  vehicleId: string;
+  startDate: string;
+  endDate: string;
+  startHalf: Half;
+  endHalf: Half;
+  reason: string | null;
   createdAt: string;
 }
 

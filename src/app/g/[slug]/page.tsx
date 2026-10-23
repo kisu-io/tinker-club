@@ -1,15 +1,24 @@
 import Link from "next/link";
 import { requireGroupMember } from "@/lib/group";
-import { Memberships, Shares } from "@/lib/repo";
+import { Memberships, Shares, Calendar } from "@/lib/repo";
 import { VehicleImage } from "@/components/VehicleImage";
+import { toGridEntries } from "@/components/MonthGrid";
+import { addDays, parseDay, todayUtc } from "@/lib/calendar";
 import { InviteCode, LeaveClubButton } from "@/app/dashboard/sharing/[clubId]/ClubControls";
 import { BookForm } from "@/app/dashboard/sharing/BookingButtons";
+import { ClubTimeline, TIMELINE_DAYS } from "./ClubTimeline";
 
-export default async function GroupHome({ params }: { params: { slug: string } }) {
+export default async function GroupHome({ params, searchParams }: { params: { slug: string }; searchParams: { from?: string } }) {
+  // Membership gate first: every query below is scoped to this club's id.
   const { user, club, isOwner } = await requireGroupMember(params.slug);
 
   const members = await Memberships.forClub(club.id);
   const shared = await Shares.forClub(club.id);
+  const today = todayUtc();
+  const from = parseDay(searchParams.from, today);
+  const ids = shared.map((v: { id: string }) => v.id);
+  const timeline = await Calendar.busy(ids, from, addDays(from, TIMELINE_DAYS - 1));
+  const upcoming = await Calendar.busy(ids, today);
 
   return (
     <div className="space-y-7">
@@ -23,6 +32,10 @@ export default async function GroupHome({ params }: { params: { slug: string } }
           {!isOwner && <LeaveClubButton clubId={club.id} />}
         </div>
       </div>
+
+      {shared.length > 0 && (
+        <ClubTimeline cars={shared} entries={timeline} from={from} today={today} viewerId={user.id} basePath={`/g/${club.slug}`} />
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-medium text-ink-500">Members ({members.length})</h2>
@@ -65,7 +78,8 @@ export default async function GroupHome({ params }: { params: { slug: string } }
                       {mine ? (
                         <Link href={`/dashboard/collection/${v.id}/share`} className="btn-ghost text-xs">Manage</Link>
                       ) : (
-                        <BookForm vehicleId={v.id} requireApproval={!!v.requireApproval} />
+                        <BookForm vehicleId={v.id} requireApproval={!!v.requireApproval}
+                          entries={toGridEntries(upcoming.filter((e) => e.vehicleId === v.id))} />
                       )}
                     </div>
                   </div>

@@ -6,6 +6,7 @@ const map: Record<BookingStatus, string> = {
   DECLINED: "bg-red-100 text-red-700",
   CANCELLED: "bg-ink-100 text-ink-500",
   COMPLETED: "bg-sky-100 text-sky-700",
+  EXPIRED: "bg-ink-100 text-ink-500",
 };
 
 export function StatusPill({ status }: { status: BookingStatus }) {

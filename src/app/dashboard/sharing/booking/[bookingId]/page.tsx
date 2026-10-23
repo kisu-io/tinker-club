@@ -5,6 +5,7 @@ import { Bookings, Vehicles, Handovers, Users } from "@/lib/repo";
 import { StatusPill } from "@/components/StatusPill";
 import { ChevronLeft } from "@/components/icons";
 import { formatDate } from "@/lib/format";
+import { formatRange } from "@/lib/slots";
 import { DEFAULT_HANDOVER_CHECKLIST } from "@/lib/constants";
 import { HandoverForm } from "./HandoverForm";
 
@@ -36,7 +37,7 @@ export default async function BookingPage({ params }: { params: { bookingId: str
           <StatusPill status={booking.status} />
         </div>
         <p className="mt-1 text-sm text-ink-500">
-          {formatDate(booking.startDate)} → {formatDate(booking.endDate)} · Borrower: {borrower?.name} · Owner: {owner?.name}
+          {formatRange(booking)} · Borrower: {borrower?.name} · Owner: {owner?.name}
         </p>
         {booking.purpose && <p className="mt-1 text-sm text-ink-600">Purpose: {booking.purpose}</p>}
       </div>
@@ -84,6 +85,12 @@ export default async function BookingPage({ params }: { params: { bookingId: str
 
       {(booking.status === "DECLINED" || booking.status === "CANCELLED") && (
         <div className="card p-5 text-sm text-ink-500">This booking is {booking.status.toLowerCase()}.</div>
+      )}
+
+      {booking.status === "EXPIRED" && (
+        <div className="card p-5 text-sm text-ink-500">
+          This request expired: the owner didn&apos;t answer within 48 hours or before its start date. The dates are free again.
+        </div>
       )}
     </div>
   );

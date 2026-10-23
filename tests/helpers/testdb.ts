@@ -25,6 +25,7 @@ process.env.DATABASE_URL = testUrl;
 const TABLES = [
   '"HandoverLog"',
   '"Booking"',
+  '"VehicleBlock"',
   '"VehicleShare"',
   '"ClubMembership"',
   '"Club"',

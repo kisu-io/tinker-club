@@ -1,19 +1,38 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { Clubs, Shares, Bookings } from "@/lib/repo";
+import { Clubs, Shares, Bookings, Calendar } from "@/lib/repo";
 import { VehicleImage } from "@/components/VehicleImage";
 import { StatusPill } from "@/components/StatusPill";
-import { formatDate } from "@/lib/format";
+import { toGridEntries } from "@/components/MonthGrid";
+import { todayUtc } from "@/lib/calendar";
+import { formatRange } from "@/lib/slots";
+import { buildAgenda, type AgendaItem } from "@/lib/agenda";
 import { CreateClubButton, JoinClubButton } from "./ClubButtons";
 import { BookForm, DecisionButtons, CancelButton } from "./BookingButtons";
 import { ChevronRight } from "@/components/icons";
 
+const ACTION_LABEL = { PICKUP: "Log pickup", RETURN: "Log return" } as const;
+
+function AgendaCard({ b, children }: { b: AgendaItem; children: React.ReactNode }) {
+  const who = b.role === "OWNER" ? `${b.borrowerName} is borrowing your car` : `Borrowing from ${b.ownerName}`;
+  return (
+    <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
+      <div className="text-sm">
+        <p className="font-medium text-ink-900">{b.year} {b.make} {b.model}</p>
+        <p className="text-ink-500">{formatRange(b)} · {who}{b.purpose ? ` · ${b.purpose}` : ""}</p>
+      </div>
+      <div className="flex items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
 export default async function SharingPage() {
   const user = await requireUser();
+  const today = todayUtc();
   const clubs = await Clubs.forUser(user.id);
   const bookable = await Shares.bookableFor(user.id);
-  const myBookings = await Bookings.byBorrower(user.id);
-  const incoming = (await Bookings.incomingFor(user.id)).filter((b) => b.status === "PENDING");
+  const busy = await Calendar.busy(Array.from(new Set(bookable.map((v) => v.id))), today);
+  const agenda = buildAgenda(await Bookings.agendaFor(user.id), user.id, today);
 
   return (
     <div className="space-y-8">
@@ -28,22 +47,39 @@ export default async function SharingPage() {
         </div>
       </div>
 
-      {incoming.length > 0 && (
+      {agenda.needsAction.length > 0 && (
         <section>
-          <h2 className="mb-3 text-sm font-medium text-ink-500">Requests awaiting your approval</h2>
+          <h2 className="mb-3 text-sm font-medium text-ink-500">Needs your action</h2>
           <div className="space-y-2">
-            {incoming.map((b) => (
-              <div key={b.id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
-                <div className="text-sm">
-                  <p className="font-medium text-ink-900">{b.borrowerName} · {b.year} {b.make} {b.model}</p>
-                  <p className="text-ink-500">{formatDate(b.startDate)} → {formatDate(b.endDate)}{b.purpose ? ` · ${b.purpose}` : ""}</p>
-                </div>
-                <DecisionButtons bookingId={b.id} />
-              </div>
+            {agenda.needsAction.map((b) => (
+              <AgendaCard key={b.id} b={b}>
+                {b.action === "DECIDE" ? (
+                  <DecisionButtons bookingId={b.id} />
+                ) : (
+                  <Link href={`/dashboard/sharing/booking/${b.id}`} className="btn-primary text-xs">{ACTION_LABEL[b.action!]}</Link>
+                )}
+              </AgendaCard>
             ))}
           </div>
         </section>
       )}
+
+      <section>
+        <h2 className="mb-3 text-sm font-medium text-ink-500">Upcoming</h2>
+        {agenda.upcoming.length === 0 ? (
+          <div className="card p-8 text-center text-sm text-ink-400">Nothing coming up.</div>
+        ) : (
+          <div className="space-y-2">
+            {agenda.upcoming.map((b) => (
+              <AgendaCard key={b.id} b={b}>
+                <StatusPill status={b.status} />
+                <Link href={`/dashboard/sharing/booking/${b.id}`} className="btn-ghost text-xs">Handover</Link>
+                {!b.pickedUp && <CancelButton bookingId={b.id} />}
+              </AgendaCard>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section>
         <h2 className="mb-3 text-sm font-medium text-ink-500">Your clubs</h2>
@@ -91,7 +127,8 @@ export default async function SharingPage() {
                     <span className="pill bg-ink-50 text-ink-500">
                       {v.requireApproval ? "Approval needed" : "Instant book"}
                     </span>
-                    <BookForm vehicleId={v.id} requireApproval={!!v.requireApproval} />
+                    <BookForm vehicleId={v.id} requireApproval={!!v.requireApproval}
+                      entries={toGridEntries(busy.filter((e) => e.vehicleId === v.id))} />
                   </div>
                 </div>
               </div>
@@ -100,28 +137,19 @@ export default async function SharingPage() {
         )}
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium text-ink-500">Your bookings</h2>
-        {myBookings.length === 0 ? (
-          <div className="card p-8 text-center text-sm text-ink-400">No bookings yet.</div>
-        ) : (
+      {agenda.history.length > 0 && (
+        <details className="group">
+          <summary className="mb-3 cursor-pointer text-sm font-medium text-ink-500 hover:text-ink-800">Past and closed ({agenda.history.length})</summary>
           <div className="space-y-2">
-            {myBookings.map((b) => (
-              <div key={b.id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
-                <div className="text-sm">
-                  <p className="font-medium text-ink-900">{b.year} {b.make} {b.model}</p>
-                  <p className="text-ink-500">{formatDate(b.startDate)} → {formatDate(b.endDate)} · {b.ownerName}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusPill status={b.status} />
-                  <Link href={`/dashboard/sharing/booking/${b.id}`} className="btn-ghost text-xs">Handover</Link>
-                  {(b.status === "PENDING" || b.status === "APPROVED") && <CancelButton bookingId={b.id} />}
-                </div>
-              </div>
+            {agenda.history.map((b) => (
+              <AgendaCard key={b.id} b={b}>
+                <StatusPill status={b.status} />
+                <Link href={`/dashboard/sharing/booking/${b.id}`} className="btn-ghost text-xs">Details</Link>
+              </AgendaCard>
             ))}
           </div>
-        )}
-      </section>
+        </details>
+      )}
     </div>
   );
 }

@@ -3,8 +3,9 @@ import type postgres from "postgres";
 import { uniqueSlug } from "./slug";
 import type {
   User, Vehicle, Expense, DocumentRow, TimelineEvent, GalleryImage,
-  Club, ClubMembership, VehicleShare, Booking, HandoverLog, Visibility,
+  Club, ClubMembership, VehicleShare, Booking, HandoverLog, Visibility, VehicleBlock,
 } from "./types";
+import { formatRange, nextFree, type Half, type SlotRange } from "./slots";
 
 type Sql = ReturnType<typeof postgres>;
 
@@ -301,6 +302,7 @@ export async function deleteVehicleAtomic(
   const result = await tx(async (sql) => {
     const owned = await sql`SELECT 1 FROM "Vehicle" WHERE id = ${vehicleId} AND "ownerId" = ${ownerId} FOR UPDATE`;
     if (!owned.length) return { ok: false, error: "Car not found." };
+    await expireStale(sql, vehicleId);
     const blocking = await sql`SELECT b.id, b."startDate", b."endDate", b.status, u.name AS "borrowerName"
       FROM "Booking" b JOIN "User" u ON u.id = b."borrowerId"
       WHERE b."vehicleId" = ${vehicleId} AND b.status IN ('PENDING','APPROVED')
@@ -319,11 +321,82 @@ export async function deleteVehicleAtomic(
 }
 
 /* ---------------- Bookings ---------------- */
+
+/**
+ * Lazy PENDING expiry (no cron): a request stops blocking, and reads as EXPIRED, once its start
+ * date has passed everywhere (UTC-12, as earliestToday) or after 48h unanswered. `t` is the
+ * Booking table alias. Reads derive it; writes persist it via expireStale under the Vehicle lock.
+ */
+const stale = (t: string) =>
+  `(${t}.status = 'PENDING' AND (${t}."startDate"::date < ((now() AT TIME ZONE 'UTC') - interval '12 hours')::date
+    OR ${t}."createdAt" < now() - interval '48 hours'))`;
+/** Booking status as users should see it (stale PENDING reads as EXPIRED). */
+const shownStatus = (t: string) => `CASE WHEN ${stale(t)} THEN 'EXPIRED' ELSE ${t}.status END`;
+
+async function expireStale(sql: Sql, vehicleId: string) {
+  await sql`UPDATE "Booking" b SET status = 'EXPIRED' WHERE b."vehicleId" = ${vehicleId} AND ${sql.unsafe(stale("b"))}`;
+}
+
+/** Half-day overlap with `r` for a table aliased `t`: slots compare as (date, half) with AM < PM. */
+const overlapsRange = (sql: Sql, t: string, r: SlotRange) =>
+  sql`(${sql.unsafe(`${t}."startDate"::date, ${t}."startHalf"`)}) <= (${r.endDate}::date, ${r.endHalf})
+    AND (${r.startDate}::date, ${r.startHalf}) <= (${sql.unsafe(`${t}."endDate"::date, ${t}."endHalf"`)})`;
+
+export type CalendarEntry = SlotRange & {
+  vehicleId: string;
+  id: string;
+  kind: "BOOKING" | "BLOCK";
+  status: "PENDING" | "APPROVED" | "BLOCKED";
+  /** Borrower name for bookings, reason for blocks. */
+  label: string;
+  borrowerId: string | null;
+};
+
+/** Active (PENDING or APPROVED, not stale) bookings and blocks on `vehicleIds` ending on/after `from`, starting on/before `to`. */
+async function busyEntries(sql: Sql, vehicleIds: string[], from: string, to = "9999-12-31"): Promise<CalendarEntry[]> {
+  if (!vehicleIds.length) return [];
+  const rows = await sql<CalendarEntry[]>`
+    SELECT b."vehicleId", b.id, 'BOOKING' AS kind, b.status, u.name AS label, b."borrowerId",
+      b."startDate", b."startHalf", b."endDate", b."endHalf"
+    FROM "Booking" b JOIN "User" u ON u.id = b."borrowerId"
+    WHERE b."vehicleId" IN ${sql(vehicleIds)} AND b.status IN ('PENDING','APPROVED') AND NOT ${sql.unsafe(stale("b"))}
+      AND b."endDate"::date >= ${from}::date AND b."startDate"::date <= ${to}::date
+    UNION ALL
+    SELECT k."vehicleId", k.id, 'BLOCK', 'BLOCKED', COALESCE(k.reason, 'Blocked'), NULL,
+      k."startDate", k."startHalf", k."endDate", k."endHalf"
+    FROM "VehicleBlock" k
+    WHERE k."vehicleId" IN ${sql(vehicleIds)} AND k."endDate"::date >= ${from}::date AND k."startDate"::date <= ${to}::date
+    ORDER BY "startDate", "startHalf"`;
+  return rows.map((r) => ({ ...r }));
+}
+
+export const Calendar = {
+  busy: async (vehicleIds: string[], from: string, to?: string) => busyEntries(await conn(), vehicleIds, from, to),
+};
+
+/** Under the Vehicle lock: the first active booking or block overlapping `r`, plus the next free range of the same length. */
+async function findConflict(sql: Sql, vehicleId: string, r: SlotRange) {
+  await expireStale(sql, vehicleId);
+  const [booking] = await sql<{ id: string }[]>`SELECT b.id FROM "Booking" b
+    WHERE b."vehicleId" = ${vehicleId} AND b.status IN ('PENDING','APPROVED') AND ${overlapsRange(sql, "b", r)}
+    ORDER BY b."startDate" LIMIT 1`;
+  const [block] = booking ? [] : await sql<{ id: string }[]>`SELECT k.id FROM "VehicleBlock" k
+    WHERE k."vehicleId" = ${vehicleId} AND ${overlapsRange(sql, "k", r)} LIMIT 1`;
+  if (!booking && !block) return null;
+  const free = nextFree(await busyEntries(sql, [vehicleId], r.startDate), r);
+  return { bookingId: booking?.id, blockId: block?.id, nextFree: free, hint: `Next free: ${formatRange(free)}.` };
+}
+
+export type AgendaRow = Booking & {
+  make: string; model: string; year: number; ownerId: string; ownerName: string; borrowerName: string;
+  pickedUp: boolean; returned: boolean;
+};
+
 export const Bookings = {
-  byId: async (bid: string) => get<Booking>('SELECT * FROM "Booking" WHERE id=?', bid),
+  byId: async (bid: string) => get<Booking>(`SELECT b.*, ${shownStatus("b")} AS status FROM "Booking" b WHERE b.id=?`, bid),
   forVehicle: async (vid: string) =>
     all<Booking & { borrowerName: string }>(
-      `SELECT b.*, u.name AS "borrowerName" FROM "Booking" b JOIN "User" u ON u.id = b."borrowerId"
+      `SELECT b.*, ${shownStatus("b")} AS status, u.name AS "borrowerName" FROM "Booking" b JOIN "User" u ON u.id = b."borrowerId"
        WHERE b."vehicleId" = ? ORDER BY b."startDate" DESC`, vid),
   activeForVehicle: async (vid: string) =>
     all<Booking & { borrowerName: string }>(
@@ -334,25 +407,61 @@ export const Bookings = {
       `SELECT b.*, v.make, v.model, v.year, v."imageUrl", u.name AS "ownerName"
        FROM "Booking" b JOIN "Vehicle" v ON v.id = b."vehicleId" JOIN "User" u ON u.id = v."ownerId"
        WHERE b."borrowerId" = ? ORDER BY b."startDate" DESC`, uid),
-  // Booking requests on vehicles owned by uid
-  incomingFor: async (uid: string) =>
-    all<Booking & { borrowerName: string; make: string; model: string; year: number }>(
-      `SELECT b.*, u.name AS "borrowerName", v.make, v.model, v.year
-       FROM "Booking" b JOIN "Vehicle" v ON v.id = b."vehicleId" JOIN "User" u ON u.id = b."borrowerId"
-       WHERE v."ownerId" = ? ORDER BY b."createdAt" DESC`, uid),
-  overlapping: async (vehicleId: string, startDate: string, endDate: string) =>
-    all<Booking>(
-      `SELECT * FROM "Booking" WHERE "vehicleId"=? AND status IN ('PENDING','APPROVED')
-       AND "startDate"::date <= ?::date AND ?::date <= "endDate"::date`, vehicleId, endDate, startDate),
-  async create(d: { vehicleId: string; borrowerId: string; startDate: string; endDate: string; status: string; purpose?: string }) {
+  /** Every booking where uid is borrower or car owner, with display status and handover facts (My agenda, nav badge). */
+  agendaFor: async (uid: string) =>
+    all<AgendaRow>(
+      `SELECT b.*, ${shownStatus("b")} AS status, v.make, v.model, v.year, v."ownerId",
+         o.name AS "ownerName", u.name AS "borrowerName",
+         COALESCE(h."pickedUpAt" IS NOT NULL, false) AS "pickedUp", COALESCE(h."returnedAt" IS NOT NULL, false) AS "returned"
+       FROM "Booking" b JOIN "Vehicle" v ON v.id = b."vehicleId"
+       JOIN "User" o ON o.id = v."ownerId" JOIN "User" u ON u.id = b."borrowerId"
+       LEFT JOIN "HandoverLog" h ON h."bookingId" = b.id
+       WHERE b."borrowerId" = ? OR v."ownerId" = ?
+       ORDER BY b."startDate" ASC, b."startHalf" ASC`, uid, uid),
+  async create(d: { vehicleId: string; borrowerId: string; startDate: string; endDate: string; status: string; purpose?: string; startHalf?: Half; endHalf?: Half }) {
     const bid = id();
-    await run('INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", status, purpose) VALUES (?,?,?,?,?,?,?)',
-      bid, d.vehicleId, d.borrowerId, d.startDate, d.endDate, d.status, d.purpose ?? null);
+    await run('INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", "startHalf", "endHalf", status, purpose) VALUES (?,?,?,?,?,?,?,?,?)',
+      bid, d.vehicleId, d.borrowerId, d.startDate, d.endDate, d.startHalf ?? "AM", d.endHalf ?? "PM", d.status, d.purpose ?? null);
     return bid;
   },
   transition: async (bid: string, from: string, to: string) =>
     run('UPDATE "Booking" SET status=? WHERE id=? AND status=?', to, bid, from),
+  /** Owner decision on a PENDING request; a stale (expired) request can no longer be decided. Returns whether it applied. */
+  decide: async (bid: string, decision: "APPROVED" | "DECLINED") =>
+    (await all(`UPDATE "Booking" b SET status=? WHERE b.id=? AND b.status='PENDING' AND NOT ${stale("b")} RETURNING b.id`, decision, bid)).length > 0,
 };
+
+/* ---------------- Vehicle blocks ---------------- */
+export const Blocks = {
+  forVehicle: async (vid: string) =>
+    all<VehicleBlock>('SELECT * FROM "VehicleBlock" WHERE "vehicleId" = ? ORDER BY "startDate", "startHalf"', vid),
+  /** Owner-only delete; returns the vehicleId when a block was removed. */
+  remove: async (blockId: string, ownerId: string) =>
+    (await get<{ vehicleId: string }>(
+      `DELETE FROM "VehicleBlock" k USING "Vehicle" v
+       WHERE k.id = ? AND v.id = k."vehicleId" AND v."ownerId" = ? RETURNING k."vehicleId"`, blockId, ownerId))?.vehicleId,
+};
+
+/**
+ * Owner block over a half-day range. Refused when it overlaps an active booking (the owner must
+ * cancel or decline it first, so a block never silently overrides a booking) or another block.
+ * Same Vehicle row lock as requestBookingAtomic, so a block and a booking can't both slip in.
+ */
+export async function addBlockAtomic(d: SlotRange & { vehicleId: string; ownerId: string; reason?: string }):
+  Promise<{ ok: true; id: string } | { ok: false; error: string; bookingId?: string }> {
+  if (d.startDate < earliestToday()) return { ok: false, error: "A block can't start in the past." };
+  return tx(async (sql) => {
+    const owned = await sql`SELECT 1 FROM "Vehicle" WHERE id = ${d.vehicleId} AND "ownerId" = ${d.ownerId} FOR UPDATE`;
+    if (!owned.length) return { ok: false as const, error: "Car not found." };
+    const c = await findConflict(sql, d.vehicleId, d);
+    if (c?.bookingId) return { ok: false as const, error: "Those dates overlap a booking. Cancel or decline it first.", bookingId: c.bookingId };
+    if (c) return { ok: false as const, error: "Those dates are already blocked." };
+    const kid = id();
+    await sql`INSERT INTO "VehicleBlock" (id, "vehicleId", "startDate", "endDate", "startHalf", "endHalf", reason)
+      VALUES (${kid}, ${d.vehicleId}, ${d.startDate}, ${d.endDate}, ${d.startHalf}, ${d.endHalf}, ${d.reason ?? null})`;
+    return { ok: true as const, id: kid };
+  });
+}
 
 /**
  * Atomic booking request: access check + overlap check + insert in one transaction.
@@ -366,8 +475,11 @@ export async function requestBookingAtomic(d: {
   borrowerId: string;
   startDate: string;
   endDate: string;
+  startHalf?: Half;
+  endHalf?: Half;
   purpose?: string;
-}): Promise<{ error?: string; bid?: string; status?: string }> {
+}): Promise<{ error?: string; bid?: string; status?: string; nextFree?: SlotRange }> {
+  const r: SlotRange = { startDate: d.startDate, startHalf: d.startHalf ?? "AM", endDate: d.endDate, endHalf: d.endHalf ?? "PM" };
   if (d.startDate < earliestToday()) return { error: "Start date can't be in the past." };
   const result = await tx(async (sql) => {
     await sql`SELECT 1 FROM "Vehicle" WHERE id = ${d.vehicleId} FOR UPDATE`;
@@ -377,19 +489,17 @@ export async function requestBookingAtomic(d: {
       WHERE s."vehicleId" = ${d.vehicleId}`;
     if (access.requireApproval === null) return { error: "This car isn't shared with any of your clubs." };
     const status = access.requireApproval ? "PENDING" : "APPROVED";
-    const clashes = await sql`SELECT 1 FROM "Booking"
-      WHERE "vehicleId" = ${d.vehicleId}
-        AND status IN ('PENDING','APPROVED')
-        AND "startDate"::date <= ${d.endDate}::date
-        AND ${d.startDate}::date <= "endDate"::date
-      LIMIT 1`;
-    if (clashes.length) return { error: "Those dates overlap an existing booking." };
+    const c = await findConflict(sql, d.vehicleId, r);
+    if (c) {
+      const what = c.bookingId ? "an existing booking" : "dates the owner has blocked";
+      return { error: `Those dates overlap ${what}. ${c.hint}`, nextFree: c.nextFree };
+    }
     const bid = id();
-    await sql`INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", status, purpose)
-      VALUES (${bid}, ${d.vehicleId}, ${d.borrowerId}, ${d.startDate}, ${d.endDate}, ${status}, ${d.purpose ?? null})`;
+    await sql`INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", "startHalf", "endHalf", status, purpose)
+      VALUES (${bid}, ${d.vehicleId}, ${d.borrowerId}, ${r.startDate}, ${r.endDate}, ${r.startHalf}, ${r.endHalf}, ${status}, ${d.purpose ?? null})`;
     return { bid, status };
   });
-  return result as { error?: string; bid?: string; status?: string };
+  return result as { error?: string; bid?: string; status?: string; nextFree?: SlotRange };
 }
 
 /* ---------------- Handover ---------------- */
@@ -429,7 +539,7 @@ type GuardResult = { ok: true } | { ok: false; error: string };
 /** Lock a booking and return it with owner and pickup facts, or undefined if the user isn't owner or borrower. */
 async function lockBookingFor(sql: Sql, bookingId: string, userId: string) {
   const [row] = await sql<{ status: string; isOwner: boolean; pickedUp: boolean }[]>`
-    SELECT b.status, v."ownerId" = ${userId} AS "isOwner",
+    SELECT ${sql.unsafe(shownStatus("b"))} AS status, v."ownerId" = ${userId} AS "isOwner",
       EXISTS (SELECT 1 FROM "HandoverLog" h WHERE h."bookingId" = b.id AND h."pickedUpAt" IS NOT NULL) AS "pickedUp"
     FROM "Booking" b JOIN "Vehicle" v ON v.id = b."vehicleId"
     WHERE b.id = ${bookingId} AND (v."ownerId" = ${userId} OR b."borrowerId" = ${userId})
@@ -442,7 +552,7 @@ export async function cancelBookingAtomic(bookingId: string, userId: string): Pr
   return tx(async (sql): Promise<GuardResult> => {
     const b = await lockBookingFor(sql, bookingId, userId);
     if (!b) return { ok: false, error: "Booking not found." };
-    if (b.status === "COMPLETED" || b.status === "CANCELLED") return { ok: false, error: "This booking is already closed." };
+    if (b.status === "COMPLETED" || b.status === "CANCELLED" || b.status === "EXPIRED") return { ok: false, error: "This booking is already closed." };
     if (b.pickedUp) return { ok: false, error: "The car has been picked up. Complete the booking instead." };
     await sql`UPDATE "Booking" SET status = 'CANCELLED' WHERE id = ${bookingId}`;
     return { ok: true };
