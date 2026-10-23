@@ -25,16 +25,24 @@ async function setup() {
   return { owner, borrower, car };
 }
 
+async function setupShared(requireApproval = false) {
+  const s = await setup();
+  const club = await Clubs.create(s.owner.id, `S${n}`);
+  await Memberships.add(club.id, s.borrower.id);
+  await shareVehicleAtomic(s.car.id, club.id, requireApproval);
+  return { ...s, club };
+}
+
 /* G1 */
 test("only one of two simultaneous overlapping requests succeeds", async () => {
-  const { borrower, car } = await setup();
+  const { borrower, car } = await setupShared();
   const sql = await conn();
   // Hold a SHARE lock on Booking: both requests can run their overlap SELECT but block on INSERT,
   // forcing the interleaving the race needs. Without the Vehicle row lock both would insert.
   const gate = await sql.reserve();
   await gate`BEGIN`;
   await gate`LOCK TABLE "Booking" IN SHARE MODE`;
-  const req = () => requestBookingAtomic({ vehicleId: car.id, borrowerId: borrower.id, startDate: "2030-03-01", endDate: "2030-03-05", status: "APPROVED" });
+  const req = () => requestBookingAtomic({ vehicleId: car.id, borrowerId: borrower.id, startDate: "2030-03-01", endDate: "2030-03-05" });
   const pending = Promise.all([req(), req()]);
   for (let i = 0; i < 100; i++) {
     const [{ waiting }] = await sql<{ waiting: number }[]>`SELECT count(DISTINCT pid)::int AS waiting FROM pg_locks WHERE NOT granted`;
@@ -52,17 +60,36 @@ test("only one of two simultaneous overlapping requests succeeds", async () => {
 
 /* Past dates */
 test("rejects a booking whose start date is in the past", async () => {
-  const { borrower, car } = await setup();
-  const res = await requestBookingAtomic({ vehicleId: car.id, borrowerId: borrower.id, startDate: "2000-01-01", endDate: "2030-01-01", status: "APPROVED" });
+  const { borrower, car } = await setupShared();
+  const res = await requestBookingAtomic({ vehicleId: car.id, borrowerId: borrower.id, startDate: "2000-01-01", endDate: "2030-01-01" });
   assert.ok(res.error);
   assert.equal((await Bookings.forVehicle(car.id)).length, 0);
 });
 
 test("accepts a booking that starts today", async () => {
-  const { borrower, car } = await setup();
+  const { borrower, car } = await setupShared();
   const today = new Date().toISOString().slice(0, 10);
-  const res = await requestBookingAtomic({ vehicleId: car.id, borrowerId: borrower.id, startDate: today, endDate: today, status: "APPROVED" });
+  const res = await requestBookingAtomic({ vehicleId: car.id, borrowerId: borrower.id, startDate: today, endDate: today });
   assert.ok(res.bid, res.error);
+});
+
+/* G7: access is re-checked under the Vehicle lock */
+test("requestBookingAtomic derives status and refuses once access is gone", async () => {
+  const { owner, borrower, car, club } = await setupShared(true);
+  const req = (startDate: string) =>
+    requestBookingAtomic({ vehicleId: car.id, borrowerId: borrower.id, startDate, endDate: startDate });
+
+  const first = await req("2030-05-01");
+  assert.equal(first.status, "PENDING");
+  assert.equal(await statusOf(first.bid!), "PENDING");
+
+  assert.ok((await requestBookingAtomic({ vehicleId: car.id, borrowerId: owner.id, startDate: "2030-05-03", endDate: "2030-05-03" })).error);
+
+  await leaveClubAtomic(club.id, borrower.id);
+  const afterLeave = await req("2030-05-05");
+  assert.ok(afterLeave.error);
+  assert.equal(afterLeave.bid, undefined);
+  assert.equal((await Bookings.activeForVehicle(car.id)).length, 0);
 });
 
 /* G3 */

@@ -108,20 +108,18 @@ export async function requestBooking(fd: FormData) {
   const access = await Shares.isBookableBy(vehicleId, user.id);
   if (!access) return { error: "This car isn't shared with any of your clubs." };
 
-  const status = access.requireApproval ? "PENDING" : "APPROVED";
   const purpose = String(fd.get("purpose") || "").trim() || undefined;
   const result = await requestBookingAtomic({
     vehicleId,
     borrowerId: user.id,
     startDate,
     endDate,
-    status,
     purpose,
   });
   if (result.error) return { error: result.error };
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${vehicleId}/share`);
-  return { ok: true, status };
+  return { ok: true, status: result.status };
 }
 
 export async function decideBooking(bookingId: string, decision: "APPROVED" | "DECLINED") {

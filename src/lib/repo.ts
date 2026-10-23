@@ -258,6 +258,8 @@ async function cancelOrphanedBookings(sql: Sql, scope: { vehicleId: string } | {
 /** Leave a club (the OWNER membership is never removed) and drop bookings that lost access. */
 export async function leaveClubAtomic(clubId: string, userId: string): Promise<void> {
   await tx(async (sql) => {
+    await sql`SELECT 1 FROM "Vehicle" WHERE id IN (SELECT "vehicleId" FROM "VehicleShare" WHERE "clubId" = ${clubId})
+      ORDER BY id FOR UPDATE`; // serialize with requestBookingAtomic
     await sql`DELETE FROM "ClubMembership" WHERE "clubId" = ${clubId} AND "userId" = ${userId} AND role != 'OWNER'`;
     await cancelOrphanedBookings(sql, { borrowerId: userId });
   });
@@ -352,22 +354,28 @@ export const Bookings = {
 };
 
 /**
- * Atomic booking request: overlap check + insert in one transaction.
- * The Vehicle row lock serializes concurrent requests for the same car, so two
- * overlapping requests can't both pass the check at READ COMMITTED.
- * Returns { error } on clash or past start date, or { bid } on success.
+ * Atomic booking request: access check + overlap check + insert in one transaction.
+ * The Vehicle row lock serializes concurrent requests for the same car (so two overlapping
+ * requests can't both pass at READ COMMITTED) and with unshare/leave-club, so access and the
+ * PENDING/APPROVED status (instant if any of the borrower's clubs is instant) are decided under it.
+ * Returns { error } on lost access, clash or past start date, or { bid, status } on success.
  */
 export async function requestBookingAtomic(d: {
   vehicleId: string;
   borrowerId: string;
   startDate: string;
   endDate: string;
-  status: string;
   purpose?: string;
-}): Promise<{ error?: string; bid?: string }> {
+}): Promise<{ error?: string; bid?: string; status?: string }> {
   if (d.startDate < earliestToday()) return { error: "Start date can't be in the past." };
   const result = await tx(async (sql) => {
     await sql`SELECT 1 FROM "Vehicle" WHERE id = ${d.vehicleId} FOR UPDATE`;
+    const [access] = await sql`SELECT MIN(s."requireApproval") AS "requireApproval" FROM "VehicleShare" s
+      JOIN "ClubMembership" m ON m."clubId" = s."clubId" AND m."userId" = ${d.borrowerId}
+      JOIN "Vehicle" v ON v.id = s."vehicleId" AND v."ownerId" != ${d.borrowerId}
+      WHERE s."vehicleId" = ${d.vehicleId}`;
+    if (access.requireApproval === null) return { error: "This car isn't shared with any of your clubs." };
+    const status = access.requireApproval ? "PENDING" : "APPROVED";
     const clashes = await sql`SELECT 1 FROM "Booking"
       WHERE "vehicleId" = ${d.vehicleId}
         AND status IN ('PENDING','APPROVED')
@@ -377,10 +385,10 @@ export async function requestBookingAtomic(d: {
     if (clashes.length) return { error: "Those dates overlap an existing booking." };
     const bid = id();
     await sql`INSERT INTO "Booking" (id, "vehicleId", "borrowerId", "startDate", "endDate", status, purpose)
-      VALUES (${bid}, ${d.vehicleId}, ${d.borrowerId}, ${d.startDate}, ${d.endDate}, ${d.status}, ${d.purpose ?? null})`;
-    return { bid };
+      VALUES (${bid}, ${d.vehicleId}, ${d.borrowerId}, ${d.startDate}, ${d.endDate}, ${status}, ${d.purpose ?? null})`;
+    return { bid, status };
   });
-  return result as { error?: string; bid?: string };
+  return result as { error?: string; bid?: string; status?: string };
 }
 
 /* ---------------- Handover ---------------- */
