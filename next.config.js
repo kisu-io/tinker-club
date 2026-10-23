@@ -8,6 +8,9 @@ const nextConfig = {
   // renamed to top-level serverExternalPackages in Next.js 15.
   experimental: {
     serverComponentsExternalPackages: ["postgres", "bcryptjs"],
+    // migrate.ts reads schema.sql at runtime; make sure every serverless
+    // function bundle (incl. /login and /register actions) ships it.
+    outputFileTracingIncludes: { "/**": ["./scripts/schema.sql"] },
   },
   // Defense in depth: next/image is not used today (VehicleImage renders a
   // plain <img>), but keep this narrow so a future switch to <Image> doesn't

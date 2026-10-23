@@ -2,6 +2,7 @@
 // Single-process scope only — multi-instance deploys need an external store.
 
 import { headers } from "next/headers";
+import { clientIpFromHeaders } from "./client-ip";
 
 interface Entry {
   count: number;
@@ -55,19 +56,7 @@ export function reset(key: string) {
   store.delete(key);
 }
 
-/**
- * Best-effort client IP for rate limiting.
- * Cloudflare Tunnel forwards the real visitor IP via cf-connecting-ip and
- * x-forwarded-for; most reverse proxies use x-forwarded-for.
- */
+/** Best-effort client IP for rate limiting (see clientIpFromHeaders). */
 export function clientIp(): string {
-  const h = headers();
-  const cf = h.get("cf-connecting-ip");
-  if (cf) return cf.trim();
-  const xff = h.get("x-forwarded-for");
-  if (xff) {
-    const first = xff.split(",")[0]?.trim();
-    if (first) return first;
-  }
-  return "unknown";
+  return clientIpFromHeaders(headers());
 }

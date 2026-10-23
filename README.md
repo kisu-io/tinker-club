@@ -100,7 +100,7 @@ cloudflared tunnel --url http://localhost:3000
 
 Open the printed URL on your phone. The tunnel URL changes each run and stops when the laptop sleeps. For a stable URL, create a named tunnel against a Cloudflare account + domain (see Cloudflare's "Set up a tunnel" docs).
 
-The rate limiter reads `cf-connecting-ip` / `x-forwarded-for`, so limits apply per real visitor IP behind the tunnel.
+The rate limiter reads `x-forwarded-for` (and `cf-connecting-ip` only when `TRUST_CF_CONNECTING_IP=true`), so limits apply per real visitor IP behind the tunnel.
 
 ## Project structure
 

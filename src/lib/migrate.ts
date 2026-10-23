@@ -37,8 +37,22 @@ export async function backfillClubSlugs(sql: Sql): Promise<void> {
   }
 }
 
-/** Full migration: schema + backfill. Shared by db.ts and seed.mjs. */
+// Arbitrary app-wide key for pg_advisory_xact_lock; serializes migrate().
+const MIGRATION_LOCK_KEY = 724113;
+
+/**
+ * Full migration: schema + backfill. Shared by db.ts and seed.mjs.
+ *
+ * Runs in one transaction behind a transaction-scoped advisory lock so
+ * concurrent cold starts on an empty DB don't race on CREATE TABLE (duplicate
+ * pg_type key). Transaction-scoped locks are safe through transaction-mode
+ * poolers; session-level advisory locks are not.
+ */
 export async function migrate(sql: Sql, schemaPath?: string): Promise<void> {
-  await runSchema(sql, schemaPath);
-  await backfillClubSlugs(sql);
+  await sql.begin(async (tx) => {
+    const t = tx as unknown as Sql;
+    await t`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`;
+    await runSchema(t, schemaPath);
+    await backfillClubSlugs(t);
+  });
 }
