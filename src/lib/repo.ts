@@ -398,7 +398,7 @@ export const Handovers = {
   /**
    * Upsert a handover log for a booking. Uses ON CONFLICT to avoid the
    * read-then-write TOCTOU race. Partial updates preserve existing fields
-   * via COALESCE(existing, new).
+   * via COALESCE(existing, new); damageReported uses GREATEST so it is never cleared.
    */
   async upsert(bid: string, d: Partial<HandoverLog>, sql?: Sql) {
     const hid = id();
