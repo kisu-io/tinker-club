@@ -169,6 +169,20 @@ test("cancel keeps the owner/borrower check and refuses finished bookings", asyn
   assert.equal((await cancelBookingAtomic(done, borrower.id)).ok, false);
 });
 
+/* Decide / complete only move from their expected status */
+test("a transition on a booking that is no longer in the expected status is a no-op", async () => {
+  const { borrower, car } = await setup();
+  const bid = await book(car.id, borrower.id, "CANCELLED");
+  await Bookings.transition(bid, "PENDING", "APPROVED");
+  assert.equal(await statusOf(bid), "CANCELLED");
+  await Bookings.transition(bid, "APPROVED", "COMPLETED");
+  assert.equal(await statusOf(bid), "CANCELLED");
+
+  const pending = await book(car.id, borrower.id, "PENDING", "2030-06-01", "2030-06-02");
+  await Bookings.transition(pending, "PENDING", "APPROVED");
+  assert.equal(await statusOf(pending), "APPROVED");
+});
+
 /* G6 */
 test("re-saving pickup never clears a reported damage flag", async () => {
   const { borrower, car } = await setup();

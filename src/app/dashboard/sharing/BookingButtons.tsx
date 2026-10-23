@@ -85,7 +85,7 @@ export function CancelButton({ bookingId }: { bookingId: string }) {
   return (
     <button
       disabled={pending}
-      onClick={() => { if (confirm("Cancel this booking?")) start(async () => { await cancelBooking(bookingId); router.refresh(); }); }}
+      onClick={() => { if (confirm("Cancel this booking?")) start(async () => { const res = await cancelBooking(bookingId); if (res?.error) alert(res.error); router.refresh(); }); }}
       className="btn-ghost text-xs disabled:opacity-50"
     >
       Cancel

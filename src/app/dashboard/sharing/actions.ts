@@ -130,7 +130,7 @@ export async function decideBooking(bookingId: string, decision: "APPROVED" | "D
   if (!vehicle) return;
   // State machine: only PENDING bookings can be approved/declined.
   if (booking.status !== "PENDING") return;
-  await Bookings.setStatus(bookingId, decision);
+  await Bookings.transition(bookingId, "PENDING", decision);
   revalidatePath("/dashboard/sharing");
   revalidatePath(`/dashboard/collection/${booking.vehicleId}/share`);
 }
@@ -154,7 +154,7 @@ export async function completeBooking(bookingId: string) {
   if (booking.status !== "APPROVED") return;
   const isOwner = !!(await Vehicles.forOwner(booking.vehicleId, user.id));
   if (!isOwner && booking.borrowerId !== user.id) return;
-  await Bookings.setStatus(bookingId, "COMPLETED");
+  await Bookings.transition(bookingId, "APPROVED", "COMPLETED");
   revalidatePath("/dashboard/sharing");
 }
 

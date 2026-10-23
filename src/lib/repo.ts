@@ -350,7 +350,8 @@ export const Bookings = {
       bid, d.vehicleId, d.borrowerId, d.startDate, d.endDate, d.status, d.purpose ?? null);
     return bid;
   },
-  setStatus: async (bid: string, status: string) => run('UPDATE "Booking" SET status=? WHERE id=?', status, bid),
+  transition: async (bid: string, from: string, to: string) =>
+    run('UPDATE "Booking" SET status=? WHERE id=? AND status=?', to, bid, from),
 };
 
 /**
