@@ -75,3 +75,16 @@ test("deleting removes club shares and all dependent rows", async () => {
   assert.equal((await all('SELECT 1 FROM "HandoverLog" WHERE "bookingId" = ?', bid)).length, 0);
   assert.ok(await Clubs.bySlug(club.slug), "club itself survives");
 });
+
+test("blocks deletion for a picked-up booking that has not been returned", async () => {
+  const owner = await mkUser("o-pickup@example.com");
+  const borrower = await mkUser("b-pickup@example.com");
+  const car = await mkCar(owner.id);
+  const bid = await book(car.id, borrower.id, "APPROVED");
+  await Handovers.upsert(bid, { pickedUpAt: new Date().toISOString() });
+
+  const res = await deleteVehicleAtomic(car.id, owner.id);
+
+  assert.equal(res.ok, false);
+  assert.ok(await Vehicles.byId(car.id));
+});
