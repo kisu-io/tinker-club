@@ -58,7 +58,6 @@ export const Vehicles = {
   },
   setVisibility: async (vid: string, v: Visibility) => run('UPDATE "Vehicle" SET visibility=? WHERE id=?', v, vid),
   setImage: async (vid: string, url: string) => run('UPDATE "Vehicle" SET "imageUrl"=? WHERE id=?', url, vid),
-  remove: async (vid: string, uid: string) => run('DELETE FROM "Vehicle" WHERE id=? AND "ownerId"=?', vid, uid),
   shareCount: async (vid: string) => (await get<{ c: number }>('SELECT COUNT(*) c FROM "VehicleShare" WHERE "vehicleId"=?', vid))?.c ?? 0,
   /** Bulk fetch share counts for many vehicles in one query (avoids N+1). */
   shareCounts: async (vids: string[]): Promise<Record<string, number>> => {
@@ -251,6 +250,38 @@ export async function unshareVehicleAtomic(vehicleId: string, clubId: string): P
       WHERE id = ${vehicleId} AND visibility = 'CLUB'
       AND NOT EXISTS (SELECT 1 FROM "VehicleShare" WHERE "vehicleId" = ${vehicleId})`;
   });
+}
+
+export type BlockingBooking = Pick<Booking, "id" | "startDate" | "endDate" | "status"> & { borrowerName: string };
+
+/**
+ * Owner-only delete. Refuses while a PENDING or APPROVED booking exists (APPROVED also covers
+ * picked-up-not-returned, since status only becomes COMPLETED on return). Everything else
+ * (shares, bookings, handovers, expenses, documents, timeline, gallery) goes via ON DELETE CASCADE.
+ * The FOR UPDATE row lock serializes against concurrent booking inserts (FOR KEY SHARE on the FK).
+ */
+export async function deleteVehicleAtomic(
+  vehicleId: string,
+  ownerId: string
+): Promise<{ ok: true } | { ok: false; error: string; blocking?: BlockingBooking[] }> {
+  const result = await tx(async (sql) => {
+    const owned = await sql`SELECT 1 FROM "Vehicle" WHERE id = ${vehicleId} AND "ownerId" = ${ownerId} FOR UPDATE`;
+    if (!owned.length) return { ok: false, error: "Car not found." };
+    const blocking = await sql`SELECT b.id, b."startDate", b."endDate", b.status, u.name AS "borrowerName"
+      FROM "Booking" b JOIN "User" u ON u.id = b."borrowerId"
+      WHERE b."vehicleId" = ${vehicleId} AND b.status IN ('PENDING','APPROVED')
+      ORDER BY b."startDate" ASC`;
+    if (blocking.length) {
+      return {
+        ok: false,
+        error: "This car has pending or approved bookings. Cancel or decline them first.",
+        blocking: blocking.map((r) => ({ ...r })),
+      };
+    }
+    await sql`DELETE FROM "Vehicle" WHERE id = ${vehicleId} AND "ownerId" = ${ownerId}`;
+    return { ok: true };
+  });
+  return result as { ok: true } | { ok: false; error: string; blocking?: BlockingBooking[] };
 }
 
 /* ---------------- Bookings ---------------- */

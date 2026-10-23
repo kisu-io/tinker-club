@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
-import { Vehicles, Timeline } from "@/lib/repo";
+import { Vehicles, Timeline, deleteVehicleAtomic } from "@/lib/repo";
 import type { Visibility } from "@/lib/types";
 import { EXPENSE_CATEGORIES } from "@/lib/constants";
 
@@ -129,7 +129,8 @@ export async function setVisibility(vehicleId: string, visibility: Visibility) {
 
 export async function deleteVehicle(vehicleId: string) {
   const user = await requireUser();
-  await Vehicles.remove(vehicleId, user.id);
+  const result = await deleteVehicleAtomic(vehicleId, user.id);
+  if (!result.ok) return result;
   revalidatePath("/dashboard/collection");
   redirect("/dashboard/collection");
 }
