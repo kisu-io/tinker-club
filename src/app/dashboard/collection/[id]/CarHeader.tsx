@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition, useRef, useEffect } from "react";
 import { ChevronLeft } from "@/components/icons";
 import { setVisibility } from "../actions";
+import { DeleteCarButton } from "./DeleteCarButton";
 import type { Visibility } from "@/lib/types";
 
 const TABS = ["profile", "gallery", "documents", "expenses", "timeline", "share"] as const;
@@ -90,6 +91,7 @@ export function CarHeader({ id, title, visibility }: { id: string; title: string
             )}
           </div>
         </div>
+        <DeleteCarButton id={id} title={title} />
       </div>
 
       <nav className="no-scrollbar -mb-3 mt-3 flex gap-5 overflow-x-auto text-sm">
