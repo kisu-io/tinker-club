@@ -24,8 +24,11 @@ database layer on **Node 22's built-in `node:sqlite`** (no external DB server, n
 **Car sharing (the new feature)**
 - **Clubs** — create a club, get an invite code, join with a code, see members
 - **Share a car into a club** — toggle "require approval" (vs. instant booking)
-- **Booking** — members browse cars shared with their clubs and request dates; overlap detection prevents double-booking
-- **Approvals** — owners approve / decline requests; borrowers can cancel
+- **Booking** — members browse cars shared with their clubs and request morning (AM) / afternoon (PM) half-day slots, so a car returned in the morning can go out again that afternoon; overlap detection prevents double-booking and suggests the next free slot. A request is instant if any of the borrower's clubs sharing the car allows instant booking
+- **Owner blocks** — owners mark one-off unavailable dates on the car's Share tab; a block can't overlap an existing booking (cancel or decline it first)
+- **Calendars** — a month calendar per car (Share tab and booking form), a club timeline at `/g/<slug>` showing who booked which car when, and a "My agenda" view on the Sharing page
+- **Approvals** — owners approve / decline requests; borrowers can cancel until pickup. Unanswered requests expire after 48 hours or once their start date passes
+- **Needs action badge** — the top nav counts bookings waiting on you (in-app only, no email)
 - **Handover log** — pickup & return checklist with mileage / fuel readings and damage reporting
 
 ## Requirements
