@@ -6,6 +6,8 @@ import { Logo } from "./Logo";
 import { GroupSwitcher } from "./GroupSwitcher";
 import { CarIcon, WalletIcon, ShareIcon, UserIcon } from "./icons";
 
+const SHARING = "/dashboard/sharing";
+
 const items = [
   { href: "/dashboard/collection", label: "Collection", icon: CarIcon },
   { href: "/dashboard/expense-manager", label: "Expense Manager", icon: WalletIcon },
@@ -13,12 +15,22 @@ const items = [
   { href: "/dashboard/profile", label: "Profile", icon: UserIcon },
 ];
 
+function Badge({ count, className = "" }: { count: number; className?: string }) {
+  if (!count) return null;
+  return (
+    <span aria-label={`${count} need${count === 1 ? "s" : ""} your action`}
+      className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-600 px-1 text-[10px] font-semibold leading-none text-white ${className}`}>
+      {count > 9 ? "9+" : count}
+    </span>
+  );
+}
+
 function isActive(pathname: string, href: string) {
   if (href.endsWith("/collection")) return pathname.startsWith("/dashboard/collection");
   return pathname.startsWith(href);
 }
 
-export function TopNav({ initials, groups }: { initials: string; groups: { slug: string; name: string }[] }) {
+export function TopNav({ initials, groups, needsAction }: { initials: string; groups: { slug: string; name: string }[]; needsAction: number }) {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-30 hidden border-b border-ink-100 bg-white/90 backdrop-blur md:block">
@@ -31,13 +43,14 @@ export function TopNav({ initials, groups }: { initials: string; groups: { slug:
             <Link
               key={it.href}
               href={it.href}
-              className={
+              className={`inline-flex items-center gap-1.5 ${
                 isActive(pathname, it.href)
                   ? "font-semibold text-ink-900"
                   : "text-ink-500 hover:text-ink-800"
-              }
+              }`}
             >
               {it.label}
+              {it.href === SHARING && <Badge count={needsAction} />}
             </Link>
           ))}
           <GroupSwitcher groups={groups} />
@@ -53,7 +66,7 @@ export function TopNav({ initials, groups }: { initials: string; groups: { slug:
   );
 }
 
-export function BottomNav() {
+export function BottomNav({ needsAction }: { needsAction: number }) {
   const pathname = usePathname();
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-ink-100 bg-white/95 backdrop-blur md:hidden">
@@ -65,11 +78,12 @@ export function BottomNav() {
             <Link
               key={it.href}
               href={it.href}
-              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] ${
+              className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] ${
                 active ? "text-ink-900" : "text-ink-400"
               }`}
             >
               <Icon className={`h-5 w-5 ${active ? "stroke-[2.1]" : ""}`} />
+              {it.href === SHARING && <Badge count={needsAction} className="absolute right-[calc(50%-1.25rem)] top-1" />}
               <span className="font-medium">{it.label === "Expense Manager" ? "Expenses" : it.label}</span>
             </Link>
           );

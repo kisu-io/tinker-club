@@ -1,12 +1,16 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { Vehicles, Clubs, Shares, Bookings } from "@/lib/repo";
+import { Vehicles, Clubs, Shares, Bookings, Blocks, Calendar } from "@/lib/repo";
 import { StatusPill } from "@/components/StatusPill";
-import { formatDate } from "@/lib/format";
+import { CarCalendar } from "@/components/CarCalendar";
+import { toGridEntries } from "@/components/MonthGrid";
+import { parseMonth, shiftMonth, todayUtc } from "@/lib/calendar";
+import { formatRange } from "@/lib/slots";
 import { ShareForm, UnshareButton } from "./ShareControls";
+import { AddBlockForm, RemoveBlockButton } from "./BlockControls";
 import { DecisionButtons, CancelButton } from "../../../sharing/BookingButtons";
 
-export default async function SharePage({ params }: { params: { id: string } }) {
+export default async function SharePage({ params, searchParams }: { params: { id: string }; searchParams: { month?: string } }) {
   const user = await requireUser();
   const v = await Vehicles.forOwner(params.id, user.id);
   if (!v) notFound();
@@ -18,6 +22,10 @@ export default async function SharePage({ params }: { params: { id: string } }) 
   const bookings = await Bookings.forVehicle(v.id);
   const pending = bookings.filter((b) => b.status === "PENDING");
   const upcoming = bookings.filter((b) => b.status === "APPROVED");
+  const today = todayUtc();
+  const month = parseMonth(searchParams.month, today);
+  const calendar = await Calendar.busy({ userId: user.id }, [v.id], `${month}-01`, `${shiftMonth(month, 1)}-01`);
+  const blocks = (await Blocks.forVehicle(v.id)).filter((k) => k.endDate >= today);
 
   return (
     <div className="space-y-7">
@@ -48,6 +56,32 @@ export default async function SharePage({ params }: { params: { id: string } }) 
         )}
       </section>
 
+      <section className="card p-5">
+        <h2 className="mb-3 text-sm font-medium text-ink-700">Calendar</h2>
+        <CarCalendar month={month} entries={toGridEntries(calendar)} today={today} basePath={`/dashboard/collection/${v.id}/share`} />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="mb-1 text-sm font-medium text-ink-700">Block dates</h2>
+        <p className="mb-4 text-sm text-ink-500">
+          Keep the car for yourself (own use, service, a show). Members can&apos;t book blocked dates.
+        </p>
+        <AddBlockForm vehicleId={v.id} />
+        {blocks.length > 0 && (
+          <div className="mt-4 divide-y divide-ink-50 border-t border-ink-100">
+            {blocks.map((k) => (
+              <div key={k.id} className="flex items-center justify-between gap-3 py-3 text-sm">
+                <div>
+                  <p className="font-medium text-ink-900">{formatRange(k)}</p>
+                  {k.reason && <p className="text-ink-500">{k.reason}</p>}
+                </div>
+                <RemoveBlockButton blockId={k.id} />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {pending.length > 0 && (
         <section>
           <h2 className="mb-3 text-sm font-medium text-ink-500">Booking requests</h2>
@@ -56,7 +90,7 @@ export default async function SharePage({ params }: { params: { id: string } }) 
               <div key={b.id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
                 <div className="text-sm">
                   <p className="font-medium text-ink-900">{b.borrowerName}</p>
-                  <p className="text-ink-500">{formatDate(b.startDate)} → {formatDate(b.endDate)}{b.purpose ? ` · ${b.purpose}` : ""}</p>
+                  <p className="text-ink-500">{formatRange(b)}{b.purpose ? ` · ${b.purpose}` : ""}</p>
                 </div>
                 <DecisionButtons bookingId={b.id} />
               </div>
@@ -75,7 +109,7 @@ export default async function SharePage({ params }: { params: { id: string } }) 
               <div key={b.id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
                 <div className="text-sm">
                   <p className="font-medium text-ink-900">{b.borrowerName}</p>
-                  <p className="text-ink-500">{formatDate(b.startDate)} → {formatDate(b.endDate)}</p>
+                  <p className="text-ink-500">{formatRange(b)}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusPill status={b.status} />

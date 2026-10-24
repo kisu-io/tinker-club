@@ -127,6 +127,9 @@ CREATE TABLE IF NOT EXISTS "Booking" (
   purpose TEXT,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Half-day slots (AM|PM). Defaults read pre-existing whole-day rows as AM start -> PM end.
+ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "startHalf" TEXT NOT NULL DEFAULT 'AM';
+ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "endHalf" TEXT NOT NULL DEFAULT 'PM';
 CREATE INDEX IF NOT EXISTS "idx_booking_vehicle_start" ON "Booking"("vehicleId", "startDate");
 CREATE INDEX IF NOT EXISTS "idx_booking_borrower" ON "Booking"("borrowerId");
 
@@ -144,3 +147,16 @@ CREATE TABLE IF NOT EXISTS "HandoverLog" (
   "returnedAt" TEXT,
   "updatedAt" TEXT NOT NULL DEFAULT to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SSZ')
 );
+
+-- One-off owner unavailability; shares the half-day overlap check with Booking.
+CREATE TABLE IF NOT EXISTS "VehicleBlock" (
+  id TEXT PRIMARY KEY,
+  "vehicleId" TEXT NOT NULL REFERENCES "Vehicle"(id) ON DELETE CASCADE,
+  "startDate" TEXT NOT NULL,
+  "endDate" TEXT NOT NULL,
+  "startHalf" TEXT NOT NULL DEFAULT 'AM',
+  "endHalf" TEXT NOT NULL DEFAULT 'PM',
+  reason TEXT,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS "idx_block_vehicle_start" ON "VehicleBlock"("vehicleId", "startDate");

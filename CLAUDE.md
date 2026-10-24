@@ -65,7 +65,7 @@ Before changing any UI surface, read `design-system/tinker-club/MASTER.md` — i
 ### Conventions
 
 - Path alias: `@/*` → `src/*`.
-- Visibility is a string enum `'PRIVATE' | 'CLUB' | 'PUBLIC'` stored as TEXT; booking status is `'PENDING' | 'APPROVED' | 'DECLINED' | 'CANCELLED' | 'COMPLETED'` — see `src/lib/types.ts`.
+- Visibility is a string enum `'PRIVATE' | 'CLUB' | 'PUBLIC'` stored as TEXT; booking status is `'PENDING' | 'APPROVED' | 'DECLINED' | 'CANCELLED' | 'COMPLETED' | 'EXPIRED'` — see `src/lib/types.ts`.
 - Boolean-ish columns (`requireApproval`, `damageReported`, `matchingNumbers`) are stored as INTEGER 0/1 — keep that representation when adding queries.
 - `next.config.js` allows remote images from any HTTPS host (vehicle/gallery photos take URLs); there is no upload pipeline yet — wiring object storage is an explicit TODO in the README.
 - "Enhance Image" on the profile tab is a UI stub; no AI integration exists.

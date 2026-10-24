@@ -46,7 +46,7 @@ const iso = (d) => d.toISOString();
 const daysFromNow = (n) => { const d = new Date(now); d.setDate(d.getDate() + n); return iso(d).slice(0, 10); };
 
 // Wipe (children first) — use quoted identifiers to match the schema
-for (const t of ['"HandoverLog"','"Booking"','"VehicleShare"','"ClubMembership"','"Club"','"GalleryImage"','"TimelineEvent"','"Document"','"Expense"','"Vehicle"','"User"']) {
+for (const t of ['"HandoverLog"','"Booking"','"VehicleBlock"','"VehicleShare"','"ClubMembership"','"Club"','"GalleryImage"','"TimelineEvent"','"Document"','"Expense"','"Vehicle"','"User"']) {
   await sql.unsafe(`DELETE FROM ${t};`);
 }
 
@@ -174,6 +174,9 @@ const b2 = await booking(defender, demo, daysFromNow(2), daysFromNow(4), "APPROV
 // Demo completed a past booking on the Mustang, with handover log
 const b3 = await booking(mustang, demo, daysFromNow(-10), daysFromNow(-8), "COMPLETED", "Cars & coffee");
 await sql`INSERT INTO "HandoverLog" (id, "bookingId", "pickupMileageKm", "returnMileageKm", "pickupFuelPct", "returnFuelPct", "checklistJson", "pickedUpAt", "returnedAt") VALUES (${uid()}, ${b3}, ${97950}, ${98000}, ${90}, ${60}, ${JSON.stringify(["Exterior walk-around photos taken","Documents and keys present"])}, ${daysFromNow(-10)}, ${daysFromNow(-8)})`;
+
+// Demo blocked the Scirocco for a service
+await sql`INSERT INTO "VehicleBlock" (id, "vehicleId", "startDate", "endDate", "startHalf", "endHalf", reason) VALUES (${uid()}, ${scirocco}, ${daysFromNow(14)}, ${daysFromNow(15)}, 'AM', 'AM', 'Service')`;
 
 console.log("Seeded demo data.");
 console.log("Login: demo@mycollection.world / password");

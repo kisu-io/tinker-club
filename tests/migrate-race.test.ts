@@ -38,7 +38,7 @@ test("concurrent migrate() on an empty schema does not race", async () => {
         );
         const tables = await admin`
           SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = ${schema}`;
-        assert.equal(tables[0].n, 11);
+        assert.equal(tables[0].n, 12);
       } finally {
         await Promise.all(pools.map((sql) => sql.end({ timeout: 1 })));
         await admin.unsafe(`DROP SCHEMA "${schema}" CASCADE`);
