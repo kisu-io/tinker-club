@@ -347,31 +347,45 @@ export type CalendarEntry = SlotRange & {
   id: string;
   kind: "BOOKING" | "BLOCK";
   status: "PENDING" | "APPROVED" | "BLOCKED";
-  /** Borrower name for bookings, reason for blocks. */
+  /** Borrower name or 'Booked' for bookings, reason or 'Blocked' for blocks, as `viewer` may see it. */
   label: string;
   borrowerId: string | null;
 };
 
+/** Who is looking: block reasons go only to the car's owner; a borrower's name only to the owner, the borrower,
+ * or someone sharing a club with the borrower that the car is shared into (`clubId` narrows that to one club). */
+export type CalendarViewer = { userId: string; clubId?: string };
+
 /** Active (PENDING or APPROVED, not stale) bookings and blocks on `vehicleIds` ending on/after `from`, starting on/before `to`. */
-async function busyEntries(sql: Sql, vehicleIds: string[], from: string, to = "9999-12-31"): Promise<CalendarEntry[]> {
+async function busyEntries(sql: Sql, vehicleIds: string[], from: string, to = "9999-12-31", viewer?: CalendarViewer): Promise<CalendarEntry[]> {
   if (!vehicleIds.length) return [];
+  const uid = viewer?.userId ?? null;
+  const clubId = viewer?.clubId ?? null;
   const rows = await sql<CalendarEntry[]>`
-    SELECT b."vehicleId", b.id, 'BOOKING' AS kind, b.status, u.name AS label, b."borrowerId",
-      b."startDate", b."startHalf", b."endDate", b."endHalf"
-    FROM "Booking" b JOIN "User" u ON u.id = b."borrowerId"
+    SELECT b."vehicleId", b.id, 'BOOKING' AS kind, b.status,
+      CASE WHEN v."ownerId" = ${uid}::text OR b."borrowerId" = ${uid}::text OR EXISTS (
+        SELECT 1 FROM "VehicleShare" s
+        JOIN "ClubMembership" mv ON mv."clubId" = s."clubId" AND mv."userId" = ${uid}::text
+        JOIN "ClubMembership" mb ON mb."clubId" = s."clubId" AND mb."userId" = b."borrowerId"
+        WHERE s."vehicleId" = b."vehicleId" AND (${clubId}::text IS NULL OR s."clubId" = ${clubId}::text)
+      ) THEN u.name ELSE 'Booked' END AS label,
+      b."borrowerId", b."startDate", b."startHalf", b."endDate", b."endHalf"
+    FROM "Booking" b JOIN "User" u ON u.id = b."borrowerId" JOIN "Vehicle" v ON v.id = b."vehicleId"
     WHERE b."vehicleId" IN ${sql(vehicleIds)} AND b.status IN ('PENDING','APPROVED') AND NOT ${sql.unsafe(stale("b"))}
       AND b."endDate"::date >= ${from}::date AND b."startDate"::date <= ${to}::date
     UNION ALL
-    SELECT k."vehicleId", k.id, 'BLOCK', 'BLOCKED', COALESCE(k.reason, 'Blocked'), NULL,
+    SELECT k."vehicleId", k.id, 'BLOCK', 'BLOCKED',
+      CASE WHEN v."ownerId" = ${uid}::text THEN COALESCE(k.reason, 'Blocked') ELSE 'Blocked' END, NULL,
       k."startDate", k."startHalf", k."endDate", k."endHalf"
-    FROM "VehicleBlock" k
+    FROM "VehicleBlock" k JOIN "Vehicle" v ON v.id = k."vehicleId"
     WHERE k."vehicleId" IN ${sql(vehicleIds)} AND k."endDate"::date >= ${from}::date AND k."startDate"::date <= ${to}::date
     ORDER BY "startDate", "startHalf"`;
   return rows.map((r) => ({ ...r }));
 }
 
 export const Calendar = {
-  busy: async (vehicleIds: string[], from: string, to?: string) => busyEntries(await conn(), vehicleIds, from, to),
+  busy: async (viewer: CalendarViewer, vehicleIds: string[], from: string, to?: string) =>
+    busyEntries(await conn(), vehicleIds, from, to, viewer),
 };
 
 /** Under the Vehicle lock: the first active booking or block overlapping `r`, plus the next free range of the same length. */

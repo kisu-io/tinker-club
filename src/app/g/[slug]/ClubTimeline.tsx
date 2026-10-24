@@ -14,7 +14,7 @@ const TEXT: Record<CalendarEntry["status"], string> = { APPROVED: "text-white", 
 
 /**
  * Club timeline: rows are cars, columns are half-days from `from`. Server-rendered; week navigation
- * via `?from=YYYY-MM-DD`. Every member sees who booked what (Q5); block reasons stay with the owner.
+ * via `?from=YYYY-MM-DD`. Members see who booked what when the borrower is in this club (Q5); labels arrive masked from Calendar.busy.
  */
 export function ClubTimeline({ cars, entries, from, today, viewerId, basePath }: {
   cars: TimelineCar[]; entries: CalendarEntry[]; from: string; today: string; viewerId: string; basePath: string;
@@ -63,13 +63,12 @@ export function ClubTimeline({ cars, entries, from, today, viewerId, basePath }:
                     const s = Math.max(0, startSlot(e) - base);
                     const end = Math.min(COLS - 1, endSlot(e) - base);
                     if (end < 0 || s > COLS - 1) return null;
-                    const label = e.kind === "BLOCK" ? (car.ownerId === viewerId ? e.label : "Blocked") : e.label;
                     const what = e.status === "PENDING" ? "Requested" : e.status === "BLOCKED" ? "Blocked" : "Booked";
                     return (
-                      <span key={e.id} title={`${what}: ${label} (${formatRange(e)})`}
+                      <span key={e.id} title={`${what}: ${e.label} (${formatRange(e)})`}
                         style={{ gridRow: 1, gridColumn: `${s + 1} / ${end + 2}` }}
                         className={`z-10 mx-px my-1 flex items-center overflow-hidden rounded-md px-1.5 text-[11px] font-medium ${STATUS_STYLE[e.status]} ${TEXT[e.status]}`}>
-                        <span className="truncate">{label}</span>
+                        <span className="truncate">{e.label}</span>
                       </span>
                     );
                   })}

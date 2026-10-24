@@ -24,7 +24,7 @@ export default async function SharePage({ params, searchParams }: { params: { id
   const upcoming = bookings.filter((b) => b.status === "APPROVED");
   const today = todayUtc();
   const month = parseMonth(searchParams.month, today);
-  const calendar = await Calendar.busy([v.id], `${month}-01`, `${shiftMonth(month, 1)}-01`);
+  const calendar = await Calendar.busy({ userId: user.id }, [v.id], `${month}-01`, `${shiftMonth(month, 1)}-01`);
   const blocks = (await Blocks.forVehicle(v.id)).filter((k) => k.endDate >= today);
 
   return (

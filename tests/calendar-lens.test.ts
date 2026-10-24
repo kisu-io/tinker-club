@@ -6,7 +6,7 @@ import {
   shareVehicleAtomic, requestBookingAtomic, addBlockAtomic, cancelBookingAtomic, deleteVehicleAtomic,
 } from "../src/lib/repo";
 import { all, run } from "../src/lib/db";
-import { nextFree, rangesOverlap, type SlotRange } from "../src/lib/slots";
+import { nextFree, type SlotRange } from "../src/lib/slots";
 import { addDays, monthWeeks, parseMonth, parseDay, shiftMonth } from "../src/lib/calendar";
 import { buildAgenda } from "../src/lib/agenda";
 import type { AgendaRow } from "../src/lib/repo";
@@ -33,12 +33,6 @@ async function setupShared(requireApproval = false) {
 const request = (vehicleId: string, borrowerId: string, r: SlotRange) => requestBookingAtomic({ vehicleId, borrowerId, ...r });
 
 /* ---------- pure half-day slot rules ---------- */
-test("half-day slots: AM end and PM start on the same day do not overlap", () => {
-  assert.equal(rangesOverlap(R("2030-01-01", "AM", "2030-01-03", "AM"), R("2030-01-03", "PM", "2030-01-05", "PM")), false);
-  assert.equal(rangesOverlap(R("2030-01-01", "AM", "2030-01-03", "PM"), R("2030-01-03", "PM", "2030-01-05", "PM")), true);
-  assert.equal(rangesOverlap(R("2030-01-03", "AM", "2030-01-03", "AM"), R("2030-01-03", "PM", "2030-01-03", "PM")), false);
-});
-
 test("nextFree skips busy ranges and keeps the requested length", () => {
   const busy = [R("2030-01-02", "AM", "2030-01-03", "AM"), R("2030-01-03", "PM", "2030-01-04", "AM")];
   assert.deepEqual(nextFree(busy, R("2030-01-02", "AM", "2030-01-02", "PM")), R("2030-01-04", "PM", "2030-01-05", "AM"));
@@ -53,6 +47,9 @@ test("calendar helpers build Monday-first month grids and sanitize URL params", 
   assert.equal(parseMonth("2030-13", "2030-05-02"), "2030-05");
   assert.equal(parseMonth("2030-02"), "2030-02");
   assert.equal(parseDay("nope", "2030-05-02"), "2030-05-02");
+  assert.equal(parseDay("2026-02-31", "2030-05-02"), "2030-05-02");
+  assert.equal(parseDay("2030-13-01", "2030-05-02"), "2030-05-02");
+  assert.equal(parseDay("2028-02-29", "2030-05-02"), "2028-02-29");
   assert.equal(shiftMonth("2030-12", 1), "2031-01");
   assert.equal(addDays("2030-02-28", 1), "2030-03-01");
 });
@@ -134,7 +131,7 @@ test("a PENDING request unanswered for 48h stops blocking, reads EXPIRED, and ca
   assert.equal((await Bookings.byId(old.bid!))?.status, "EXPIRED");
   assert.equal(await Bookings.decide(old.bid!, "APPROVED"), false);
   assert.equal((await cancelBookingAtomic(old.bid!, borrower.id)).ok, false);
-  assert.equal((await Calendar.busy([car.id], "2030-09-01")).length, 0);
+  assert.equal((await Calendar.busy({ userId: borrower.id }, [car.id], "2030-09-01")).length, 0);
 
   const fresh = await request(car.id, borrower.id, R("2030-09-01", "AM", "2030-09-01", "PM"));
   assert.ok(fresh.bid, fresh.error);
@@ -162,9 +159,28 @@ test("the club timeline only shows cars shared into that club, with borrower nam
   await request(otherCar.id, borrower.id, R("2030-10-01", "AM", "2030-10-01", "PM"));
 
   const cars = await Shares.forClub(club.id);
-  const entries = await Calendar.busy(cars.map((c) => c.id), "2030-10-01", "2030-10-14");
+  const entries = await Calendar.busy({ userId: owner.id, clubId: club.id }, cars.map((c) => c.id), "2030-10-01", "2030-10-14");
   assert.deepEqual(cars.map((c) => c.id), [car.id]);
   assert.deepEqual(entries.map((e) => [e.vehicleId, e.label]), [[car.id, borrower.name]]);
+});
+
+test("borrower names and block reasons only reach viewers allowed to see them", async () => {
+  const { car, owner, borrower: memberA, club: clubA } = await setupShared();
+  const clubB = await Clubs.create(owner.id, `B${n}`);
+  const outsiderB = await mkUser();
+  await Memberships.add(clubB.id, outsiderB.id);
+  await shareVehicleAtomic(car.id, clubB.id, false);
+  await request(car.id, outsiderB.id, R("2030-11-01", "AM", "2030-11-01", "PM"));
+  await request(car.id, memberA.id, R("2030-11-02", "AM", "2030-11-02", "PM"));
+  const blocked = await addBlockAtomic({ vehicleId: car.id, ownerId: owner.id, ...R("2030-11-03", "AM", "2030-11-03", "PM"), reason: "Service" });
+  assert.ok(blocked.ok);
+
+  const labels = async (viewer: { userId: string; clubId?: string }) =>
+    (await Calendar.busy(viewer, [car.id], "2030-11-01", "2030-11-03")).map((e) => e.label);
+  assert.deepEqual(await labels({ userId: memberA.id, clubId: clubA.id }), ["Booked", memberA.name, "Blocked"]);
+  assert.deepEqual(await labels({ userId: memberA.id }), ["Booked", memberA.name, "Blocked"]);
+  assert.deepEqual(await labels({ userId: outsiderB.id, clubId: clubB.id }), [outsiderB.name, "Booked", "Blocked"]);
+  assert.deepEqual(await labels({ userId: owner.id }), [outsiderB.name, memberA.name, "Service"]);
 });
 
 /* ---------- agenda / needs action ---------- */

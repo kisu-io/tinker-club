@@ -31,9 +31,6 @@ export const endSlot = (r: SlotRange) => slotOf(r.endDate, r.endHalf);
 
 export const isValidRange = (r: SlotRange) => startSlot(r) <= endSlot(r);
 
-export const rangesOverlap = (a: SlotRange, b: SlotRange) =>
-  startSlot(a) <= endSlot(b) && startSlot(b) <= endSlot(a);
-
 /** First range of the same length as `wanted`, starting at or after it, that overlaps none of `busy`. */
 export function nextFree(busy: SlotRange[], wanted: SlotRange): SlotRange {
   const len = endSlot(wanted) - startSlot(wanted);

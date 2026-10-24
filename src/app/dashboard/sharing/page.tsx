@@ -31,7 +31,7 @@ export default async function SharingPage() {
   const today = todayUtc();
   const clubs = await Clubs.forUser(user.id);
   const bookable = await Shares.bookableFor(user.id);
-  const busy = await Calendar.busy(Array.from(new Set(bookable.map((v) => v.id))), today);
+  const busy = await Calendar.busy({ userId: user.id }, Array.from(new Set(bookable.map((v) => v.id))), today);
   const agenda = buildAgenda(await Bookings.agendaFor(user.id), user.id, today);
 
   return (
@@ -58,6 +58,7 @@ export default async function SharingPage() {
                 ) : (
                   <Link href={`/dashboard/sharing/booking/${b.id}`} className="btn-primary text-xs">{ACTION_LABEL[b.action!]}</Link>
                 )}
+                {b.action === "PICKUP" && <CancelButton bookingId={b.id} />}
               </AgendaCard>
             ))}
           </div>

@@ -9,6 +9,7 @@ import {
   leaveClubAtomic, cancelBookingAtomic, saveHandoverAtomic, addBlockAtomic, Blocks,
 } from "@/lib/repo";
 import { isHalf, isValidRange, type SlotRange } from "@/lib/slots";
+import { isDay } from "@/lib/calendar";
 
 // Branding inputs are user-supplied; validate before storing so they can't be
 // abused (CSS-property injection via color, tracking/non-https logo URLs).
@@ -91,8 +92,6 @@ export async function unshareVehicle(vehicleId: string, clubId: string) {
 }
 
 /* ---------------- Bookings ---------------- */
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 /** Parse startDate/startHalf/endDate/endHalf form fields (halves default to a whole-day AM -> PM range). */
 function parseRange(fd: FormData): { range: SlotRange } | { error: string } {
   const startDate = String(fd.get("startDate") || "");
@@ -100,7 +99,7 @@ function parseRange(fd: FormData): { range: SlotRange } | { error: string } {
   const startHalf = fd.get("startHalf") ?? "AM";
   const endHalf = fd.get("endHalf") ?? "PM";
   if (!startDate || !endDate) return { error: "Pick both dates." };
-  if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate) || Number.isNaN(Date.parse(startDate)) || Number.isNaN(Date.parse(endDate)))
+  if (!isDay(startDate) || !isDay(endDate))
     return { error: "Dates must be YYYY-MM-DD." };
   if (!isHalf(startHalf) || !isHalf(endHalf)) return { error: "Pick morning or afternoon." };
   const range = { startDate, startHalf, endDate, endHalf };

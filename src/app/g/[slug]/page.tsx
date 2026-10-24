@@ -17,8 +17,9 @@ export default async function GroupHome({ params, searchParams }: { params: { sl
   const today = todayUtc();
   const from = parseDay(searchParams.from, today);
   const ids = shared.map((v: { id: string }) => v.id);
-  const timeline = await Calendar.busy(ids, from, addDays(from, TIMELINE_DAYS - 1));
-  const upcoming = await Calendar.busy(ids, today);
+  const viewer = { userId: user.id, clubId: club.id };
+  const timeline = await Calendar.busy(viewer, ids, from, addDays(from, TIMELINE_DAYS - 1));
+  const upcoming = await Calendar.busy(viewer, ids, today);
 
   return (
     <div className="space-y-7">
