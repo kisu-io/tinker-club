@@ -169,6 +169,8 @@ test("borrower names and block reasons only reach viewers allowed to see them", 
   const clubB = await Clubs.create(owner.id, `B${n}`);
   const outsiderB = await mkUser();
   await Memberships.add(clubB.id, outsiderB.id);
+  const memberA2 = await mkUser();
+  await Memberships.add(clubA.id, memberA2.id);
   await shareVehicleAtomic(car.id, clubB.id, false);
   await request(car.id, outsiderB.id, R("2030-11-01", "AM", "2030-11-01", "PM"));
   await request(car.id, memberA.id, R("2030-11-02", "AM", "2030-11-02", "PM"));
@@ -179,6 +181,8 @@ test("borrower names and block reasons only reach viewers allowed to see them", 
     (await Calendar.busy(viewer, [car.id], "2030-11-01", "2030-11-03")).map((e) => e.label);
   assert.deepEqual(await labels({ userId: memberA.id, clubId: clubA.id }), ["Booked", memberA.name, "Blocked"]);
   assert.deepEqual(await labels({ userId: memberA.id }), ["Booked", memberA.name, "Blocked"]);
+  assert.deepEqual(await labels({ userId: memberA2.id, clubId: clubA.id }), ["Booked", memberA.name, "Blocked"]);
+  assert.deepEqual(await labels({ userId: memberA2.id }), ["Booked", memberA.name, "Blocked"]);
   assert.deepEqual(await labels({ userId: outsiderB.id, clubId: clubB.id }), [outsiderB.name, "Booked", "Blocked"]);
   assert.deepEqual(await labels({ userId: owner.id }), [outsiderB.name, memberA.name, "Service"]);
 });
